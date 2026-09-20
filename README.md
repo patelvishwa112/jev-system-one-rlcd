@@ -57,7 +57,7 @@ gemini_JEV/
 ### 1. Installation
 
 ```bash
-git clone https://github.com/your-username/jev-system-one-rlcd.git
+git clone https://github.com/patelvishwa112/jev-system-one-rlcd.git
 cd jev-system-one-rlcd
 
 python3 -m venv venv
