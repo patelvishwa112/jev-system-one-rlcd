@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The Death of Autoregression: How Jev & RLCD Turn Any LLM into a Calibrated Decision Engine</title>
+  <title>Decisions, Not Essays: An Honest Reproduction of Jev's System One Mechanism</title>
   <meta name="description" content="A deep dive into TypeSafe AI's Jev model, the System One paradigm, RLCD (Reinforcement Learning for Calibrated Decisions), and a hands-on guide to adapting SmolLM-135M for sub-70ms, zero-token software decisions.">
   
   <!-- Modern Fonts -->
@@ -679,9 +679,9 @@
     
     <header class="article-header">
       <div class="publication-meta">Artificial Intelligence · Systems Architecture · Deep Dive</div>
-      <h1 class="article-title">The Death of Autoregression: How Jev & RLCD Turn Any LLM into a Calibrated Decision Engine</h1>
+      <h1 class="article-title">Decisions, Not Essays: How Jev Reads Answers Straight Out of an LLM &mdash; and What We Got Wrong Reproducing It</h1>
       <p class="article-subtitle">
-        Why asking a 100-billion-parameter LLM to generate 150 tokens of JSON is a tragic architectural mistake—and how we adapted SmolLM-135M to execute parallel, calibrated, sub-70ms software decisions with 0 output tokens.
+        When the set of valid answers is already known, generating JSON token-by-token is wasted work. This is an honest, hands-on reproduction of Jev's non-autoregressive "System One" mechanism on SmolLM-135M &mdash; with real measured numbers (a ~26&times; speedup, 0 output tokens), a candid account of the untrained-head wrong turn we took first, and a proper treatment of RLCD calibration.
       </p>
 
       <div class="author-card">
@@ -704,132 +704,204 @@
       <img src="./assets/jev_system_one_cover.jpg" alt="Neural Frontiers: Advances in AI Engineering - Jev System One Decision Architecture">
       <figcaption class="media-caption">Figure 1: The paradigm shift from token-by-token autoregressive streams to direct non-autoregressive projection into calibrated decision manifolds (Choice, Score, Noul).</figcaption>
     </figure>
+<!-- Part 1 -->
+<section id="part-1">
+  <div class="callout">
+    <div class="callout-title">The Midnight Outage Test</div>
+    <p>At 03:14 AM, an automated webhook deposits an urgent incident ticket into your operational triage queue:</p>
+    <p><em>"Urgent: Payment gateway returns 502 Bad Gateway during checkout on /api/v2/pay. Customers cannot complete transactions."</em></p>
+  </div>
 
-    <!-- Section 1: The Hook & First Principles -->
-    <section>
-      <h2>1. The Madness of Modern AI Architecture</h2>
-      <p>
-        Imagine you run a hospital emergency department. A paramedic rushes through the double doors with an unconscious patient. You turn to your triage coordinator and ask a simple, urgent question: <em>"Does this patient need immediate ICU admission: Yes or No?"</em>
-      </p>
-      <p>
-        Instead of answering immediately, the triage coordinator pauses, takes a deep breath, and begins reciting a conversational monologue:
-      </p>
-      <blockquote>
-        "Certainly! I would be delighted to assist you with this medical inquiry today. First, let us consider the cardiovascular history of the patient. In opening bracket, quote decision quote colon quote yes quote comma..."
-      </blockquote>
-      <p>
-        Fifteen seconds later, after formatting twenty lines of Markdown and JSON, the coordinator reaches the closing brace—only to accidentally omit a closing quotation mark, causing your hospital's electronic health record system to throw a fatal deserialization syntax error.
-      </p>
-      <p>
-        As absurd as this sounds, <strong>this is the exact architecture powering 95% of production AI workflows today.</strong>
-      </p>
-      <p>
-        Software engineers across the globe take massive causal decoder models (GPT-4, Claude 3.5, Llama 3), pass them an incident log or support ticket, and ask them to choose between three routing categories. To extract that single categorical choice, the model must sequentially generate 50 to 150 ASCII characters of text: <code>{"category": "billing", "confidence": 0.95}</code>.
-      </p>
-      <p>
-        This is an architectural tragedy. It burns millions of dollars in GPU compute, introduces unpredictable latency spikes (700ms to 3,000ms), and introduces the risk of schema validation crashes—all to simulate human conversation when the recipient of the answer is not a human at all, but a Python script or microservice.
-      </p>
+  <p>Consider what your production orchestration system actually requires at this exact moment. It does not need a polite opening salutation. It does not need a three-paragraph synthetic essay dissecting the architectural history of payment aggregators. It does not even need conversational English.</p>
 
-      <div class="callout purple">
-        <div class="callout-title">The Central Thesis of System One AI</div>
-        <p>
-          Software does not want to chat with AI. Software does not need conversational pleasantries, Markdown formatting, or JSON serialization. <strong>Software needs discrete, deterministic, calibrated probability distributions delivered via native tensors at the speed of memory.</strong>
-        </div>
-      </div>
-    </section>
+  <p>Your incident router requires precisely three atomic, structured determinations:</p>
+  <ul>
+    <li><strong>Is this an active customer-facing outage?</strong> (Binary: <code>yes</code> or <code>no</code>)</li>
+    <li><strong>Which engineering squad owns triage?</strong> (Categorical: <code>billing</code>, <code>auth</code>, <code>infrastructure</code>, or <code>frontend</code>)</li>
+    <li><strong>What is the operational severity?</strong> (Ordinal: <code>SEV-1</code>, <code>SEV-2</code>, <code>SEV-3</code>, or <code>SEV-4</code>)</li>
+  </ul>
 
-    <!-- Section 2: The Physical Limits of Autoregression -->
-    <section>
-      <h2>2. The Physics of GPUs: Why Autoregression is an Architectural Dead End</h2>
-      <p>
-        To understand why TypeSafe AI created <strong>Jev</strong>, we must confront the physical hardware constraints of modern GPUs (H100, A100, Apple Silicon).
-      </p>
-      <p>
-        When a transformer runs inference, it operates in two radically different physical regimes:
-      </p>
+  <p>The standard architectural reflex across the industry over the past three years has been deeply inefficient: construct a massive system prompt, define a Pydantic schema, pipe the prompt into an autoregressive large language model, and wait. You wait between 1,000 and 2,000 milliseconds while an attention loop calculates key-value caches and serializes tokens one by one into a JSON string—hoping that trailing commas or hallucinated keys do not crash your parser downstream.</p>
 
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Regime</th>
-              <th>Phase</th>
-              <th>Hardware Bottleneck</th>
-              <th>FLOP Efficiency</th>
-              <th>Latency Characteristic</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Prefill (Context Encoding)</strong></td>
-              <td>Processing the input prompt / state</td>
-              <td><strong>Compute-Bound</strong></td>
-              <td>Saturates Tensor Cores (85%–95%)</td>
-              <td>Sub-70ms for thousands of tokens</td>
-            </tr>
-            <tr>
-              <td><strong>Decode (Token Generation)</strong></td>
-              <td>Emitting output tokens one-by-one</td>
-              <td><strong>Memory-Bandwidth Bound</strong></td>
-              <td>Starves Tensor Cores (&lt; 5% utilization)</td>
-              <td>15ms–35ms <em>per single token</em></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+  <p>In his landmark treatise <em>Thinking, Fast and Slow</em>, Daniel Kahneman codified human cognition into two operational regimes: <strong>System 1</strong>, which operates automatically, instinctively, and rapidly with minimal conscious deliberation; and <strong>System 2</strong>, which allocates attention to effortful, serial, and computationally expensive mental operations. When an autoregressive LLM generates structured text to classify an incident, it behaves like an agonizingly sluggish System 2: it spends hundreds of decoding steps writing syntactic scaffolding (<code>{"is_outage": true, "team": "billing"...}</code>) for a decision whose sample space was completely bounded before the query was even dispatched. If the output space is finite, discrete, and known in advance, autoregressive generation is pure wasted compute.</p>
 
-      <p>
-        During the <strong>prefill phase</strong>, the GPU processes all input tokens in parallel. Matrix multiplications are large, dense, and saturate the tensor cores. The GPU is operating at peak computational efficiency.
-      </p>
-      <p>
-        The moment the model finishes reading the prompt and starts generating text, it enters the <strong>autoregressive decode phase</strong>. To generate a single token, the GPU must fetch the entire model’s weight matrix (tens or hundreds of gigabytes) from High Bandwidth Memory (HBM) into SRAM just to execute a single vector-matrix multiply.
-      </p>
+  <p>On September 15, 2026, TypeSafe AI launched <strong>Jev</strong>, created by Diego Almeida (co-creator of ChatGPT and RLHF during his tenure at OpenAI). Jev represents the industry's first purpose-built "System One" foundation model. Jev is strictly non-autoregressive: it completely dispenses with token-by-token generation for decision tasks. Instead, it evaluates questions directly against an input state in a single evaluation pass, projecting decisions as calibrated probability distributions accompanied by explicit confidence metrics.</p>
 
-      <figure class="figure-box">
-        <img src="./assets/latency_throughput_benchmark.png" alt="Latency and Token Physics Benchmark">
-        <figcaption class="figure-caption">Figure 2: Empirical Latency Benchmark tested on Apple Silicon. Traditional autoregressive models scale linearly with generated output tokens (wasting 1,450ms on JSON formatting), while Jev System One maintains a flat ~67ms latency regardless of decision complexity.</figcaption>
-      </figure>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Autoregressive LLM (System Two)</th>
+          <th>Jev System One (Non-Autoregressive)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Execution Mechanism</strong></td>
+          <td>Serial token-by-token decoding via KV-cache rollout</td>
+          <td>Single forward prefill pass; direct logit projection</td>
+        </tr>
+        <tr>
+          <td><strong>Output Artifact</strong></td>
+          <td>Unstructured text or constrained JSON strings</td>
+          <td>Direct probability distributions &amp; calibrated confidence</td>
+        </tr>
+        <tr>
+          <td><strong>Latency Profile</strong></td>
+          <td>800ms – 3,000ms (linear with output length)</td>
+          <td>70ms – 500ms (typically ~100ms end-to-end)</td>
+        </tr>
+        <tr>
+          <td><strong>Output Token Cost</strong></td>
+          <td>USD 1.50 – 15.00 per million output tokens</td>
+          <td>0 output tokens (published by TypeSafe as "free / too cheap to meter")</td>
+        </tr>
+        <tr>
+          <td><strong>Failure Modes</strong></td>
+          <td>Syntax drift, JSON schema truncation, hallucination</td>
+          <td>Restricted softmax guarantees valid mathematical simplexes</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 
-      <p>
-        If your JSON output requires 75 tokens, the GPU must execute that memory-bound fetch <strong>75 sequential times</strong>. You are paying for 1,450 milliseconds of latency purely to format English words and punctuation marks that your downstream Python code will immediately parse and discard!
-      </p>
-    </section>
+  <p>Jev structures its universe around three typed answer primitives:</p>
+  <ul>
+    <li><strong>Noul</strong>: Binary hypothesis verification. Maps an assertion to a continuous probability $P(\text{true}) \in [0, 1]$.</li>
+    <li><strong>Choice</strong>: Categorical assignment over a closed set of up to 255 discrete options, returning a complete probability distribution and a maximum a posteriori label.</li>
+    <li><strong>Score</strong>: Ordinal positioning along a discrete scale of 2 to 10 structured levels, returning both a distribution over levels and a continuous expectation value $\mathbb{E}[S]$.</li>
+  </ul>
 
-    <!-- Section 3: Daniel Kahneman in Silicon -->
-    <section>
-      <h2>3. Daniel Kahneman in Silicon: The System One Paradigm</h2>
-      <p>
-        In his landmark book <em>Thinking, Fast and Slow</em>, Nobel laureate Daniel Kahneman described human cognition as two distinct operating modes:
-      </p>
-      <ul>
-        <li><strong>System 1 (Fast, Instinctive, Non-Verbal):</strong> Recognizes an angry face in 50 milliseconds, dodges an oncoming obstacle, or brakes when a red light flashes. It does not speak sentences; it acts on subconscious probability manifolds.</li>
-        <li><strong>System 2 (Slow, Deliberative, Linguistic):</strong> Calculates $17 \times 43$, writes an essay, or evaluates a complex legal argument. It thinks in sequential language.</li>
-      </ul>
-      <p>
-        All current frontier LLMs (GPT-4o, Claude 3.5, Gemini 1.5 Pro) are <strong>System Two</strong> engines. Even when asked the most basic reflexive question, they must engage their linguistic machinery.
-      </p>
-      <p>
-        <strong>Jev is the world's first pure System One AI model.</strong>
-      </p>
-      <p>
-        Instead of generating tokens, Jev reads up to 32,000 tokens of application state in a single compute-bound prefill pass, passes the terminal hidden state through specialized mathematical heads, and projects the answer directly into three native primitives:
-      </p>
+  <p>According to TypeSafe's published benchmarks, Jev operates <strong>40x to 200x faster</strong> than frontier generative models performing equivalent categorization tasks, evaluating all concurrent questions against a shared state in parallel. Input pricing is pegged at <strong>USD 0.042 per million input tokens</strong>, with an operational context budget of 64,000 tokens across state and questions, subject to infrastructure rate limits of 250,000 tokens per second and 1,200 requests per minute. Crucially, the model is trained with <strong>RLCD (Reinforcement Learning for Calibrated Decisions)</strong>, mathematically enforcing that when the model assigns a probability $p$ to an outcome, that outcome occurs empirically with frequency $p$.</p>
+</section>
 
-      <div class="callout green">
-        <div class="callout-title">The Three Native Decision Primitives</div>
-        <ol>
-          <li><code>Noul</code>: Evaluates a binary proposition (Yes/No). Returns a calibrated scalar probability $\hat{p} \in [0.0, 1.0]$.</li>
-          <li><code>Choice</code>: Selects from a set of up to 255 categorical options. Returns the selected choice, the full probability distribution vector across all options, and a geometric confidence score.</li>
-          <li><code>Score</code>: Rates an item across an ordered rubric (e.g., Severity 0 through 4). Evaluates continuous expectation $\mathbb{E}[S] = \sum v_b p_b$ over discrete softmax bins.</li>
-        </ol>
-      </div>
+<!-- Part 2 -->
+<section id="part-2">
+  <h2>Part 2: End-to-End Walkthrough (The Big Picture)</h2>
+  
+  <p>To understand how a System One paradigm operates in software, we must examine the interface contract. Traditional LLMs require prompting gymnastics: you define schema fences, supply few-shot examples, and beg the model to adhere strictly to valid JSON syntax. In Jev, the caller supplies a shared <code>state</code> payload alongside a map of typed questions, each declaring its semantic criteria at inference time.</p>
 
-      <p>
-        Output token count: <strong>Exactly 0.</strong> Latency: <strong>70ms to 150ms.</strong> Schema failure rate: <strong>Mathematically zero.</strong>
-      </p>
-    </section>
+  <p>Consider an automated inbound triage system evaluating an inbound business development inquiry for a developer media platform:</p>
 
-    <!-- Interactive Simulator Widget -->
+  <div class="figure-box">
+    <div class="code-badge">Official TypeSafe API Request Specification</div>
+<pre><code class="language-python">{
+  "model": "jev-latest",
+  "state": {
+    "name": "Managed Postgres",
+    "description": "High-availability Postgres clusters with automatic failover and daily backups. Looking to sponsor your developer newsletter for Q4."
+  },
+  "questions": {
+    "is_sponsor_inquiry": {
+      "type": "noul",
+      "instructions": "Does `description` ask to sponsor the site?"
+    },
+    "product_category": {
+      "type": "choice",
+      "instructions": "What kind of product is described?",
+      "criteria": {
+        "dev_tool": "Developer tools, hosting, APIs, SaaS",
+        "course": "Courses, books, training",
+        "unrelated": "Anything not aimed at developers"
+      }
+    },
+    "message_quality": {
+      "type": "score",
+      "instructions": "How specific is the request?",
+      "criteria": [
+        "Generic template, no reference to this site",
+        "Mentions the site but no concrete ask",
+        "Concrete ask with a timeframe or product named"
+      ]
+    }
+  }
+}</code></pre>
+    <div class="figure-caption">Listing 1: Canonical Jev request packaging a single state dictionary with parallel Noul, Choice, and Score inquiries.</div>
+  </div>
+
+  <p>When this payload reaches the inference engine, the model does not execute three sequential prompts. It ingests the tokenized <code>state</code> once into its transformer blocks. Then, in that exact same forward pass, it evaluates the decision boundaries for all three questions concurrently. The caller receives the following typed payload:</p>
+
+  <div class="figure-box">
+    <div class="code-badge">Official TypeSafe API Response Specification</div>
+<pre><code class="language-python">{
+  "model": "jev-1.13.0",
+  "answers": {
+    "is_sponsor_inquiry": {
+      "type": "noul",
+      "noul": 0.99
+    },
+    "product_category": {
+      "type": "choice",
+      "choice": "dev_tool",
+      "probabilities": {
+        "dev_tool": 0.97,
+        "course": 0.01,
+        "unrelated": 0.02
+      },
+      "confidence": 0.95
+    },
+    "message_quality": {
+      "type": "score",
+      "score": 1.9,
+      "legend": {
+        "0": "Generic...",
+        "1": "Mentions...",
+        "2": "Concrete..."
+      },
+      "probabilities": {
+        "0": 0.0,
+        "1": 0.1,
+        "2": 0.9
+      },
+      "confidence": 0.86
+    }
+  },
+  "usage": {
+    "input_tokens": 210,
+    "output_tokens": 31
+  }
+}</code></pre>
+    <div class="figure-caption">Listing 2: Canonical Jev response payload returning exact probabilities, discrete expectations, and calibrated confidence metrics.</div>
+  </div>
+
+  <p>Notice what occurred inside this invocation:</p>
+  <ul>
+    <li><strong>Noul Resolution:</strong> <code>is_sponsor_inquiry</code> produced <code>0.99</code>. The caller receives a scalar probability verifying the hypothesis without parsing text.</li>
+    <li><strong>Choice Distribution:</strong> <code>product_category</code> assigned 97% probability mass to <code>dev_tool</code>, with 1% on <code>course</code> and 2% on <code>unrelated</code>. The model emitted a calibrated confidence of <code>0.95</code>.</li>
+    <li><strong>Score Expectation:</strong> <code>message_quality</code> mapped the inquiry across three ordinal levels ($0, 1, 2$). The resulting distribution ($p_0=0.0, p_1=0.1, p_2=0.9$) produced an expectation score of:
+      $$\mathbb{E}[S] = (0 \times 0.0) + (1 \times 0.1) + (2 \times 0.9) = 1.9$$
+    </li>
+  </ul>
+
+  <p>As ML educator Avi Chawla (@_avichawla) pointed out in his analysis of decision scoring architectures, the fundamental operational advantage of returning complete distributions rather than raw strings is how downstream code handles uncertainty. Consider two contrasting illustrative outcomes for an incident routing ticket:</p>
+
+  <div class="callout">
+    <div class="callout-title">The Power of Distributional Visibility</div>
+    <p><strong>Scenario A (Decisive Winner):</strong> An incident arrives with probabilities <code>{"billing": 0.91, "infra": 0.05, "frontend": 0.04}</code>. The top choice commands overwhelming mass. Downstream routing logic can safely auto-assign the ticket directly to the billing on-call paging rotation.</p>
+    <p><strong>Scenario B (Near-Tie Ambiguity):</strong> An ambiguous ticket arrives with probabilities <code>{"billing": 0.46, "infra": 0.44, "frontend": 0.10}</code>. An autoregressive LLM using greedy decoding would simply output <code>"billing"</code>, completely hiding the near-even split from your application. With scoring, your code inspects the probability vector and explicitly routes the ticket to a human triage queue.</p>
+  </div>
+
+  <p>In traditional text-generation pipelines, downstream branching logic is blind. In a scoring pipeline, the control flow resides entirely in your application logic:</p>
+
+<pre><code class="language-python"># Downstream routing governed by mathematical thresholds
+category_answer = response["answers"]["product_category"]
+top_choice = category_answer["choice"]
+top_probability = category_answer["probabilities"][top_choice]
+
+if top_probability >= 0.85:
+    dispatch_automated_pipeline(top_choice)
+elif top_probability >= 0.50:
+    flag_for_async_review(top_choice, confidence=top_probability)
+else:
+    route_to_human_triage(
+        reason="Ambiguous categorization", 
+        distribution=category_answer["probabilities"]
+    )</code></pre>
+</section>
+
+
+    <!-- Interactive simulator (illustrative) -->
     <div class="interactive-card">
       <h3>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -838,8 +910,12 @@
         </svg>
         Interactive System One Decision Simulator
       </h3>
+      <div class="callout" style="margin: 8px 0 16px;">
+        <div class="callout-title">Illustrative &mdash; not our SmolLM output</div>
+        <p style="margin:0;">The confident numbers below illustrate what a <em>capable, RLCD-calibrated</em> System One model (like Jev itself) would return on these scenarios. They are hand-authored for intuition. Our own measured 135M-model outputs are far weaker and near-chance &mdash; see Part 4.</p>
+      </div>
       <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;">
-        Select a real-world scenario to simulate how Jev evaluates Noul, Choice, and Score simultaneously in a single 0-token forward pass:
+        Select a scenario to see how one shared <code>state</code> is evaluated by Noul, Choice, and Score at once in a single 0-token forward pass:
       </p>
 
       <div class="sim-selector">
@@ -882,414 +958,597 @@
         </div>
       </div>
     </div>
+<!-- Part 3 -->
+<section id="part-3">
+  <h2>Part 3: How It Actually Works: Next-Token Scoring</h2>
 
-    <!-- Section 4: The Math of Uncertainty (RLHF vs RLVR vs RLCD) -->
-    <section>
-      <h2>4. The Math of Uncertainty: Unpacking RLHF, RLVR, and RLCD</h2>
-      <p>
-        Building the heads is easy; anyone can attach a linear layer to a transformer. 
-        <strong>The real secret of Jev is its training methodology: RLCD (Reinforcement Learning for Calibrated Decisions).</strong>
-      </p>
-      <p>
-        To appreciate why RLCD is revolutionary, we must examine why existing reinforcement learning methods fail at calibration.
-      </p>
+  <p>How does a language model produce decisions without generating text? To understand the open-source reproductions—such as Avi Chawla's implementation using SGLang's <code>/v1/score</code> endpoint and the community model <code>Meanblock/JEV-CPU</code>—we must look at the mechanics of the transformer's output layer.</p>
 
-      <h3>A. Why RLHF Breeds Dangerous Overconfidence</h3>
-      <p>
-        Standard Reinforcement Learning from Human Feedback (RLHF) optimizes against a reward model trained on binary pairwise comparisons using the Bradley-Terry preference model:
-      </p>
+  <p>In standard transformer architectures, the input sequence is processed through $L$ successive self-attention and feed-forward layers. At the final token position $T$, the network emits a hidden activation vector $h_T \in \mathbb{R}^d$, where $d$ is the hidden dimensionality of the model. To generate language, this vector is multiplied by the language modeling projection matrix $\mathbf{W}_{\text{head}} \in \mathbb{R}^{V \times d}$, where $V$ is the total vocabulary size (typically between 32,000 and 152,000 unique tokens):</p>
 
-      <div class="math-card">
-        <div class="formula">
-          $$P(y_1 \succ y_2 \mid x) = \frac{\exp(r(x, y_1))}{\exp(r(x, y_1)) + \exp(r(x, y_2))}$$
-        </div>
-        <div class="explanation">
-          <strong>The Bradley-Terry Pathology:</strong> Human raters systematically reward answers that sound authoritative, decisive, and persuasive over answers that express nuance or cite balanced 55/45 probabilities. The policy gradient pushes probability mass toward extreme poles ($P \to 0$ or $P \to 1$).
-        </div>
-      </div>
+  <div class="math-card">
+    <div class="formula">
+      $$\mathbf{z} = \mathbf{W}_{\text{head}} \, h_T \quad \in \mathbb{R}^V$$
+    </div>
+    <div class="explanation">
+      The raw, unnormalized logit vector $\mathbf{z}$ contains one real-valued score for every token in the model's vocabulary at the final sequence position.
+    </div>
+  </div>
 
-      <p>
-        When an RLHF-trained model is confronted with an ambiguous edge case (e.g., a border-line fraud transaction where human experts disagree 60/40), it will not output 0.60. It will hallucinate total certainty and output 0.99. In software engineering, <strong>an uncalibrated probability is worse than useless—it is lethal.</strong>
-      </p>
+  <p>In autoregressive generation, the system applies a full softmax over all $V$ dimensions, samples a token, appends it to the sequence, and runs another forward pass. This cycle repeats $N$ times for $N$ tokens. But if our goal is simply to choose between option A, option B, or option C, <em>generating tokens is entirely unnecessary</em>.</p>
 
-      <h3>B. Why RLVR Collapses on Semantic Ambiguity</h3>
-      <p>
-        Recent reasoning models rely on <strong>RLVR (Reinforcement Learning with Verifiable Rewards)</strong>. In RLVR, the reward signal is binary and deterministic:
-      </p>
-      <div class="math-card">
-        <div class="formula">
-          $$r(x, y) \in \{0, 1\} \quad \text{(Unit test passes or fails, math lemma is valid or invalid)}$$
-        </div>
-        <div class="explanation">
-          <strong>The Aleatoric Collapse:</strong> RLVR works wonders for code generation and chess because ground truth is strictly binary. But real-world business and semantic decisions contain <em>aleatoric uncertainty</em> (irreducible disagreement among experts). Treating aleatoric disagreement as a binary win/loss forces the network to mode-collapse.
-        </div>
-      </div>
+  <p>Instead, we structure the prompt as a single-token multiple-choice question (MCQ) and terminate the prompt immediately before the answer token. We then extract only the specific logits corresponding to the choice tokens and normalize them using a <strong>restricted softmax</strong>:</p>
 
-      <h3>C. The Solution: RLCD and Strictly Proper Scoring Rules</h3>
-      <p>
-        RLCD grounds its entire loss function in the mathematical theory of <strong>Strictly Proper Scoring Rules</strong> (Gneiting & Raftery, 2007).
-      </p>
-      <p>
-        A scoring rule $S(p, y)$ assigns a reward to a predicted probability distribution $p \in \Delta^{K-1}$ when outcome $y$ occurs. A scoring rule is <strong>strictly proper</strong> if and only if the expected reward is uniquely maximized when the reported probability $p$ equals the true underlying posterior distribution $q$:
-      </p>
+  <div class="math-card">
+    <div class="formula">
+      $$P(c_k) = \frac{\exp(z_{\tau(k)})}{\sum_{j \in \mathcal{C}} \exp(z_{\tau(j)})}$$
+    </div>
+    <div class="explanation">
+      Where $\mathcal{C}$ is the set of allowed options, and $\tau(k) \in \{1, \dots, V\}$ is the unique token ID representing option $k$.
+    </div>
+  </div>
 
-      <div class="math-card">
-        <div class="formula">
-          $$\mathbb{E}_{y \sim q}[S(p, y)] \le \mathbb{E}_{y \sim q}[S(q, y)], \quad \text{with equality if and only if } p = q$$
-        </div>
-        <div class="explanation">
-          Under a strictly proper scoring rule, any attempt by the model to exaggerate its confidence, hedge unnecessarily, or lie about its uncertainty <strong>strictly reduces its mathematical reward</strong>.
-        </div>
-      </div>
+  <div class="figure-box">
+    <div class="code-badge">The mechanism, visually</div>
+    <svg viewBox="0 0 780 200" width="100%" role="img" aria-label="Prompt to restricted-softmax pipeline" style="max-width:780px;display:block;margin:0 auto;font-family:inherit;">
+      <!-- Prompt box -->
+      <rect x="8" y="30" width="152" height="122" rx="8" fill="#1e293b" stroke="#334155"/>
+      <text x="84" y="50" text-anchor="middle" fill="#94a3b8" font-size="11">Prompt (ends at)</text>
+      <text x="84" y="77" text-anchor="middle" fill="#e2e8f0" font-size="12">A = billing</text>
+      <text x="84" y="95" text-anchor="middle" fill="#e2e8f0" font-size="12">B = technical</text>
+      <text x="84" y="113" text-anchor="middle" fill="#e2e8f0" font-size="12">C = account</text>
+      <text x="84" y="138" text-anchor="middle" fill="#f59e0b" font-size="12">Label:</text>
+      <!-- arrow 1 -->
+      <line x1="164" y1="91" x2="205" y2="91" stroke="#64748b" stroke-width="2"/>
+      <polygon points="205,85 218,91 205,97" fill="#64748b"/>
+      <!-- transformer -->
+      <rect x="222" y="59" width="118" height="64" rx="8" fill="#0f2a3f" stroke="#3b82f6"/>
+      <text x="281" y="86" text-anchor="middle" fill="#93c5fd" font-size="12">1 forward pass</text>
+      <text x="281" y="104" text-anchor="middle" fill="#93c5fd" font-size="12">(prefill)</text>
+      <text x="281" y="141" text-anchor="middle" fill="#64748b" font-size="10">no decode loop</text>
+      <!-- arrow 2 -->
+      <line x1="344" y1="91" x2="385" y2="91" stroke="#64748b" stroke-width="2"/>
+      <polygon points="385,85 398,91 385,97" fill="#64748b"/>
+      <!-- logit strip -->
+      <text x="454" y="22" text-anchor="middle" fill="#94a3b8" font-size="11">Next-token logits (V &#8776; 49k)</text>
+      <line x1="404" y1="151" x2="506" y2="151" stroke="#334155" stroke-width="1"/>
+      <rect x="405" y="106" width="7" height="45" fill="#334155"/>
+      <rect x="414" y="89"  width="7" height="62" fill="#334155"/>
+      <rect x="423" y="101" width="7" height="50" fill="#334155"/>
+      <rect x="432" y="56"  width="7" height="95" fill="#3b82f6"/>
+      <rect x="441" y="84"  width="7" height="67" fill="#f43f5e"/>
+      <rect x="450" y="118" width="7" height="33" fill="#10b981"/>
+      <rect x="459" y="99"  width="7" height="52" fill="#334155"/>
+      <rect x="468" y="92"  width="7" height="59" fill="#334155"/>
+      <rect x="477" y="107" width="7" height="44" fill="#334155"/>
+      <rect x="486" y="95"  width="7" height="56" fill="#334155"/>
+      <rect x="495" y="103" width="7" height="48" fill="#334155"/>
+      <text x="435" y="166" text-anchor="middle" fill="#3b82f6" font-size="10">A</text>
+      <text x="444" y="166" text-anchor="middle" fill="#f43f5e" font-size="10">B</text>
+      <text x="453" y="166" text-anchor="middle" fill="#10b981" font-size="10">C</text>
+      <text x="452" y="186" text-anchor="middle" fill="#94a3b8" font-size="10">keep only A, B, C &#183; ignore the rest</text>
+      <!-- arrow 3 -->
+      <line x1="516" y1="91" x2="557" y2="91" stroke="#64748b" stroke-width="2"/>
+      <polygon points="557,85 570,91 557,97" fill="#64748b"/>
+      <!-- restricted softmax -->
+      <text x="674" y="22" text-anchor="middle" fill="#94a3b8" font-size="11">Restricted softmax</text>
+      <rect x="588" y="55" width="170" height="18" rx="3" fill="#1e293b" stroke="#334155"/><rect x="588" y="55" width="116" height="18" rx="3" fill="#3b82f6"/>
+      <text x="594" y="68" fill="#e2e8f0" font-size="11">billing 0.68</text>
+      <rect x="588" y="83" width="170" height="18" rx="3" fill="#1e293b" stroke="#334155"/><rect x="588" y="83" width="53" height="18" rx="3" fill="#f43f5e"/>
+      <text x="594" y="96" fill="#e2e8f0" font-size="11">technical 0.31</text>
+      <rect x="588" y="111" width="170" height="18" rx="3" fill="#1e293b" stroke="#334155"/><rect x="588" y="111" width="6" height="18" rx="3" fill="#10b981"/>
+      <text x="594" y="124" fill="#e2e8f0" font-size="11">account 0.01</text>
+      <text x="674" y="150" text-anchor="middle" fill="#64748b" font-size="10">0 tokens generated</text>
+    </svg>
+    <div class="figure-caption">Figure: the same forward pass an LLM uses to pick its first token becomes the whole decision. We never sample &mdash; we read the logits at the option-letter positions and softmax across just those. (Original diagram; the concept mirrors Avi Chawla's write-up.)</div>
+  </div>
 
-      <p>RLCD optimizes two primary strictly proper scoring rules:</p>
+  <div class="callout">
+    <div class="callout-title">The Single-Token Discipline &amp; Tokenizer Gotchas</div>
+    <p>This mechanism depends on a strict architectural requirement: <strong>every option label must resolve to exactly one token in the tokenizer</strong>. If you attempt to use semantic words as labels—such as <code>billing</code>, <code>infrastructure</code>, and <code>frontend</code>—the mechanism breaks down:</p>
+    <ul>
+      <li>Words like <code>infrastructure</code> split into multiple subword tokens (e.g., <code>["in", "frast", "ructure"]</code>). Computing the probability of a multi-token sequence requires evaluating joint conditional probabilities across multiple decoding steps, reintroducing the latency of generation.</li>
+      <li>Leading whitespace creates silent bugs. In modern Byte-Pair Encoding (BPE) tokenizers (such as LLaMA or Qwen), the string <code>"A"</code> and the string <code>" A"</code> (with a leading space) map to completely distinct token IDs. If your prompt ends with <code>"Answer: "</code> (with a trailing space), the expected next token is <code>"A"</code>. If your prompt ends with <code>"Answer:"</code>, the next token is <code>" A"</code>.</li>
+    </ul>
+    <p>By enforcing single-token letter identifiers (<code>A</code>, <code>B</code>, <code>C</code>, <code>D</code>), we guarantee invariant token lengths and exact logit extraction.</p>
+  </div>
 
-      <h4>1. Multi-Class Brier Score Loss</h4>
-      <p>The Brier score measures the mean squared error in probability space:</p>
-      <div class="math-card">
-        <div class="formula">
-          $$\mathcal{L}_{\text{Brier}}(p, q) = \sum_{k=1}^K (p_k - q_k)^2$$
-        </div>
-      </div>
+  <p>This single primitive generalizes directly across all three Jev primitives:</p>
+  <ul>
+    <li><strong>Noul:</strong> A 2-option restricted softmax evaluated over tokens representing <code>Yes</code> and <code>No</code> (or <code>A</code> and <code>B</code>).</li>
+    <li><strong>Choice:</strong> A categorical restricted softmax over $K$ option letters ($\le 255$).</li>
+    <li><strong>Score:</strong> A choice over $M$ ordinal bins ($0, 1, \dots, M-1$). The model computes probabilities $p_0, \dots, p_{M-1}$ and computes the scalar expectation $\mathbb{E}[S] = \sum_{m=0}^{M-1} m \cdot p_m$.</li>
+  </ul>
 
-      <h4>2. Logarithmic Loss over Soft Dirichlet Consensus</h4>
-      <p>When multiple raters disagree on an ambiguous prompt, RLCD fits a Dirichlet distribution $\mathbf{q} \in \Delta^{K-1}$ and minimizes cross-entropy against the soft consensus:</p>
-      <div class="math-card">
-        <div class="formula">
-          $$\mathcal{L}_{\text{Log}}(p, q) = - \sum_{k=1}^K q_k \ln(p_k)$$
-        </div>
-      </div>
+  <div class="callout">
+    <div class="callout-title">The Mandatory OTHER / ESCALATE Escape Hatch</div>
+    <p>A critical mathematical property of restricted softmax noted by Avi Chawla is that it forces 100% of the probability mass onto the declared candidate set $\mathcal{C}$, because $\sum_{k \in \mathcal{C}} P(c_k) = 1$ by construction. If an input is completely out-of-distribution—such as submitting a poetry analysis request to a payment triage router—the model cannot say "none of the above" unless an explicit escape token is provided. Without an <code>[Z] None of the above / Escalate to human</code> option, the restricted softmax will artificially amplify whichever arbitrary category happened to have the highest baseline logit.</p>
+  </div>
 
-      <h4>3. Continuous Ranked Probability Score (CRPS) for Ordinal Rubrics</h4>
-      <p>
-        For the <code>Score</code> primitive, confusing a Severity 1 outage with Severity 2 should incur a tiny penalty, while confusing Severity 0 with Severity 4 should be catastrophic. RLCD optimizes the CRPS over cumulative distributions:
-      </p>
-      <div class="math-card">
-        <div class="formula">
-          $$\text{CRPS}(F_p, y) = \sum_{k=1}^{K-1} \left( F_p(k) - \mathbf{1}(y \le k) \right)^2, \quad \text{where } F_p(k) = \sum_{j=1}^k p_j$$
-        </div>
-      </div>
+  <p>The code required to implement next-token scoring in PyTorch is remarkably concise. The following snippet illustrates the core scoring logic from our corrected <code>jev_scoring.py</code> implementation:</p>
 
-      <h4>4. Murphy's Score Decomposition: The Mathematical Proof</h4>
-      <p>
-        Why does minimizing Brier score guarantee calibration? Allan Murphy proved that the Brier score decomposes into three orthogonal terms:
-      </p>
+  <div class="figure-box">
+    <div class="code-badge">jev_scoring.py</div>
+<pre><code class="language-python">import torch
+import torch.nn.functional as F
 
-      <div class="math-card">
-        <div class="formula">
-          $$\text{Brier Score} = \underbrace{\sum_{m=1}^M \frac{|B_m|}{N} (\bar{p}_m - \bar{y}_m)^2}_{\textbf{Reliability (Expected Calibration Error)}} - \underbrace{\sum_{m=1}^M \frac{|B_m|}{N} (\bar{y}_m - \bar{y})^2}_{\textbf{Resolution (Discrimination Power)}} + \underbrace{\bar{y}(1 - \bar{y})}_{\textbf{Uncertainty (Bayes Error)}}$$
-        </div>
-        <div class="explanation">
-          Notice the signs! Reliability has a positive sign (it is an error term that RLCD minimizes to 0). Resolution has a negative sign (it measures the model's ability to cleanly separate distinct classes, which RLCD maximizes). Uncertainty is the constant irreducible noise of reality.
-        </div>
-      </div>
-
-      <!-- Worked Numerical Example -->
-      <h3>Worked Numerical Example: The Cost of Overconfidence</h3>
-      <p>
-        To see this in action, consider 100 ambiguous production tickets where the true ground truth escalation probability is $q = 0.60$ (60 escalate, 40 do not).
-      </p>
-
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Evaluation Metric</th>
-              <th>Uncalibrated Model A (Predicts p = 0.99)</th>
-              <th>RLCD Calibrated Model B (Predicts p = 0.60)</th>
-              <th>The RLCD Verdict</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Raw Accuracy</strong></td>
-              <td>60.0%</td>
-              <td>60.0%</td>
-              <td>Identical zero-one accuracy</td>
-            </tr>
-            <tr>
-              <td><strong>Brier Score Loss</strong></td>
-              <td><strong>0.3921</strong></td>
-              <td><strong>0.2400</strong></td>
-              <td>Model A penalized +63.3%</td>
-            </tr>
-            <tr>
-              <td><strong>Logarithmic Loss</strong></td>
-              <td><strong>1.846 nats</strong></td>
-              <td><strong>0.673 nats</strong></td>
-              <td>Model A penalized +174.3%</td>
-            </tr>
-            <tr>
-              <td><strong>Calibration Error (ECE)</strong></td>
-              <td><strong>39.0% (Severe Drift)</strong></td>
-              <td><strong>0.0% (Perfect)</strong></td>
-              <td>Model B provides safe software trust</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <figure class="figure-box">
-        <img src="./assets/calibration_reliability_diagram.png" alt="Calibration Reliability Diagram">
-        <figcaption class="figure-caption">Figure 3: Reliability Diagram from our SmolLM-135M experiment. Before RLCD (left), the model exhibited an ECE of 28.38% with severe overconfidence. After RLCD training (right), empirical accuracy tracks assigned confidence along the identity diagonal, achieving an ECE of 2.14%.</figcaption>
-      </figure>
-    </section>
-
-    <!-- Section 5: Architectural Surgery on SmolLM-135M -->
-    <section>
-      <h2>5. Architectural Surgery: Transforming SmolLM-135M</h2>
-      <p>
-        Can you do this with <em>any</em> pretrained open-source LLM? <strong>Yes.</strong>
-      </p>
-      <p>
-        In our experiments, we took Hugging Face’s compact, highly efficient <a href="https://huggingface.co/HuggingFaceTB/SmolLM-135M" target="_blank">SmolLM-135M</a> (134.5 million parameters, hidden dimension $d=576$, 30 transformer layers) and performed architectural surgery.
-      </p>
-
-      <h3>Step 1: Severing the Vocabulary Head</h3>
-      <p>
-        A standard causal decoder model possesses an <code>lm_head</code> that projects the final hidden state $h_T \in \mathbb{R}^{576}$ into a 49,152-dimensional vocabulary logit space. We delete it entirely:
-      </p>
-
-      <pre><code class="language-python"># Load pretrained causal decoder backbone
-config = AutoConfig.from_pretrained("HuggingFaceTB/SmolLM-135M")
-base_causal_lm = AutoModelForCausalLM.from_pretrained("HuggingFaceTB/SmolLM-135M")
-
-# Extract the transformer layers
-self.transformer = base_causal_lm.model
-self.hidden_size = config.hidden_size # 576
-
-# ARCHITECTURAL SURGERY: Delete the 49,152-token language modeling head!
-del base_causal_lm.lm_head</code><span class="code-badge">PyTorch</span></pre>
-
-      <h3>Step 2: Attaching the Specialized Decision Heads</h3>
-      <p>
-        In place of the vocabulary head, we attach three non-autoregressive projection heads directly to the terminal sequence embedding $h_T$:
-      </p>
-
-      <pre><code class="language-python">class NoulHead(nn.Module):
-    """Maps h_T in R^576 -> scalar logit -> calibrated Sigmoid."""
-    def __init__(self, hidden_size: int, initial_temp: float = 1.0):
-        super().__init__()
-        self.proj = nn.Linear(hidden_size, 1)
-        self.log_temp = nn.Parameter(torch.tensor(math.log(initial_temp)))
-
-    def forward(self, h_terminal: torch.Tensor):
-        raw_logit = self.proj(h_terminal).squeeze(-1)
-        temp = torch.exp(self.log_temp).clamp(min=1e-3, max=10.0)
-        calibrated_prob = torch.sigmoid(raw_logit / temp)
-        return raw_logit, calibrated_prob
-
-
-class ChoiceHead(nn.Module):
-    """Maps h_T in R^576 -> 255-dim pointer -> dynamically sliced Softmax."""
-    def __init__(self, hidden_size: int, max_cardinality: int = 255):
-        super().__init__()
-        self.proj = nn.Linear(hidden_size, max_cardinality)
-        self.log_temp = nn.Parameter(torch.tensor(0.0))
-
-    def forward(self, h_terminal: torch.Tensor, num_options: int):
-        raw_logits = self.proj(h_terminal)
-        # Dynamically slice to active options K <= 255
-        active_logits = raw_logits[:, :num_options]
-        temp = torch.exp(self.log_temp).clamp(min=1e-3, max=10.0)
-        calibrated_probs = F.softmax(active_logits / temp, dim=-1)
-        return active_logits, calibrated_probs
-
-
-class ScoreHead(nn.Module):
-    """Maps h_T in R^576 -> B discrete rubric bins -> E[Score] = sum(v_b * p_b)."""
-    def __init__(self, hidden_size: int, num_bins: int = 5):
-        super().__init__()
-        self.proj = nn.Linear(hidden_size, num_bins)
-        self.register_buffer("bin_values", torch.arange(num_bins, dtype=torch.float32))
-
-    def forward(self, h_terminal: torch.Tensor):
-        logits = self.proj(h_terminal)
-        bin_probs = F.softmax(logits, dim=-1)
-        expected_score = torch.sum(bin_probs * self.bin_values, dim=-1)
-        return logits, bin_probs, expected_score</code><span class="code-badge">smollm_system_one.py</span></pre>
-
-      <h3>Step 3: Calculating Calibrated Confidence</h3>
-      <p>
-        How does the model calculate confidence? In Jev, confidence is not simply the highest probability $\max(p)$. It combines the <strong>Top Margin Separation</strong> (gap between #1 and #2) and the <strong>Normalized Negative Entropy</strong>:
-      </p>
-
-      <pre><code class="language-python">class ConfidenceCalculator:
-    @staticmethod
-    def calculate(probs: torch.Tensor) -> float:
-        K = probs.size(0)
-        sorted_p = sorted(probs.detach().cpu().numpy(), reverse=True)
-        
-        # 1. Top Margin difference: P_top - P_second
-        margin = float(sorted_p[0] - sorted_p[1])
-        
-        # 2. Normalized negative entropy: 1 - H(p) / ln(K)
-        entropy = -sum(p * math.log(max(p, 1e-12)) for p in sorted_p)
-        norm_entropy_certainty = 1.0 - (entropy / math.log(K))
-        
-        # Blended geometric confidence score in [0.0, 1.0]
-        confidence = 0.5 * margin + 0.5 * norm_entropy_certainty
-        return max(0.0, min(1.0, confidence))</code><span class="code-badge">Python</span></pre>
-
-      <div class="callout amber">
-        <div class="callout-title">The Three-Tier Software Risk Logic</div>
-        <p>
-          By decoupling confidence from raw probability, software engineers can implement robust automated workflows:
-        </p>
-        <ul style="margin-bottom: 0;">
-          <li><strong>High Confidence (&ge; 0.85):</strong> Automated execution with 0 human intervention (e.g., auto-refund or instant incident route).</li>
-          <li><strong>Medium Confidence (0.60 – 0.84):</strong> Execute with passive logging or secondary heuristics.</li>
-          <li><strong>Low Confidence (&lt; 0.60):</strong> Safe fallback to human triage or an expensive System Two reasoning model.</li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- Section 6: How to Train Any Existing LLM Yourself -->
-    <section>
-      <h2>6. How to Train Any Existing LLM with RLCD Yourself</h2>
-      <p>
-        You do not need billions of dollars or private supercomputing clusters to reproduce this architecture. You can train a calibrated decision engine on your laptop or a single Google Colab GPU.
-      </p>
-
-      <h3>Step 1: Finding or Synthesizing the Right Dataset</h3>
-      <p>
-        To train with RLCD, you need datasets that contain <strong>soft consensus distributions</strong> rather than noisy one-hot binary labels. Two outstanding Hugging Face datasets are available for immediate reproduction:
-      </p>
-
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Dataset Hub ID</th>
-              <th>Annotation Structure</th>
-              <th>Why It Is Perfect for RLCD</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>takala/financial_phrasebank</code></td>
-              <td>16 financial analysts with agreement tiers (50%, 66%, 75%, 100%)</td>
-              <td>Captures genuine real-world aleatoric ambiguity across positive, neutral, and negative financial signals.</td>
-            </tr>
-            <tr>
-              <td><code>Hate-speech-CNERG/hatexplain</code></td>
-              <td>Multiple human annotator votes and demographic IDs per sample</td>
-              <td>Provides multi-rater probability distributions instead of majority-rule flattening.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h4>Synthesizing Aleatoric Consensus via Cheap LLMs</h4>
-      <p>
-        What if you are building an internal company router and have no labeled data? You can use a cheap, fast LLM (e.g., <strong>Gemini 1.5 / 2.0 Flash</strong>, Claude 3.5 Haiku, or Llama-3-8B) to synthesize soft Dirichlet targets:
-      </p>
-
-      <pre><code class="language-python">def label_state_with_cheap_llm(state: str, question: str, options: list, num_raters: int = 10):
+def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) -> dict[str, float]:
     """
-    Samples empirical Dirichlet consensus by querying a cheap LLM across
-    multiple temperatures and diverse persona framings.
+    Executes a single prefill pass and computes a restricted softmax
+    over designated single-token option letters.
     """
-    votes = []
-    for i in range(num_raters):
-        temp = 0.6 + (i * 0.05) # Perturb temperature
-        prompt = f"System: You are expert evaluator #{i}.\nState: {state}\nQuestion: {question}"
-        response = cheap_llm.generate(prompt, temperature=temp)
-        votes.append(parse_choice(response))
-        
-    # Construct soft empirical Dirichlet distribution
-    counts = Counter(votes)
-    soft_target = [(counts[opt] + 0.1) / (num_raters + 0.1 * len(options)) for opt in options]
-    return soft_target # e.g. [0.72, 0.18, 0.07, 0.03]</code><span class="code-badge">Data Synthesis Pipeline</span></pre>
+    # Verify strict single-token invariant for each label
+    option_token_ids = []
+    for letter in option_letters:
+        token_ids = tokenizer.encode(letter, add_special_tokens=False)
+        assert len(token_ids) == 1, (
+            f"Option label '{letter}' must map to exactly 1 token; got {token_ids}"
+        )
+        option_token_ids.append(token_ids[0])
 
-      <h3>Step 2: The Complete Training Script (`train_rlcd.py`)</h3>
-      <p>
-        We have provided a fully reproducible training script in the repository: <code>train_rlcd.py</code>. It loads the SmolLM-135M backbone, mounts the decision heads, computes Brier score loss and soft cross-entropy, and updates the weights via AdamW:
-      </p>
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-      <figure class="figure-box">
-        <img src="./assets/rlcd_training_curves.png" alt="RLCD Training Curves">
-        <figcaption class="figure-caption">Figure 4: Training dynamics of SmolLM-135M trained under RLCD. Brier score loss and logarithmic loss converge smoothly, driving Expected Calibration Error (ECE) below the 5% target threshold in fewer than 300 steps.</figcaption>
-      </figure>
+    with torch.no_grad():
+        outputs = model(**inputs)
+        # Extract vocabulary logits at the final position: shape [vocab_size]
+        last_token_logits = outputs.logits[0, -1, :]
 
-      <p>To run the training loop on your machine:</p>
-      <pre><code class="language-bash"># 1. Clone the repository
-git clone https://github.com/patelvishwa112/jev-system-one-rlcd.git
-cd jev-system-one-rlcd
+        # Gather logits strictly at our candidate token indices
+        candidate_logits = last_token_logits[option_token_ids]
 
-# 2. Install dependencies
-pip install -r requirements.txt
+        # Compute restricted softmax over the allowed choice set
+        probabilities = F.softmax(candidate_logits, dim=-1).cpu().tolist()
 
-# 3. Train SmolLM-135M with RLCD (Runs on Apple Silicon, CUDA, or CPU)
-python3 train_rlcd.py --epochs 3 --batch_size 4 --lr 5e-5</code><span class="code-badge">Terminal</span></pre>
+    return dict(zip(option_letters, probabilities))</code></pre>
+    <div class="figure-caption">Listing 3: The exact next-token logit scoring mechanism. The model executes one forward pass and never generates text.</div>
+  </div>
+</section>
 
-      <h3>Step 3: Measuring If It's Working (Evaluation Metrics)</h3>
-      <p>
-        When training with RLCD, ignore raw accuracy. Track these three calibration metrics:
-      </p>
-      <ul>
-        <li><strong>Brier Score Loss (&lt; 0.10):</strong> Verifies strictly proper probability scoring.</li>
-        <li><strong>Expected Calibration Error (ECE &lt; 5.0%):</strong> Assesses whether predicted confidence matches empirical win rate across all 10 confidence bins.</li>
-        <li><strong>Brier Skill Score (BSS &gt; 0.40):</strong> Measures the percentage improvement over a naive base-rate forecast: $\text{BSS} = 1 - \frac{\text{Brier}}{\text{Brier}_{\text{reference}}}$.</li>
-      </ul>
-    </section>
+<!-- Part 4 -->
+<section id="part-4">
+  <h2>Part 4: Our SmolLM Experiment: What We Built, Measured, and Got Wrong</h2>
 
-    <!-- Section 7: Reproducing the Experiment & Next Steps -->
-    <section>
-      <h2>7. The Complete Reproduction Toolkit</h2>
-      <p>
-        Everything shown in this article is open-source and runnable today. The repository contains:
-      </p>
+  <p>Technical writing often suffers from retrospective sanitization: teams present their final working system as though it emerged fully formed on the first attempt. In developing our local reproduction of Jev, we took an initial architectural misstep that was fundamentally flawed. Documenting this failure is essential, because it highlights the exact conceptual traps surrounding non-autoregressive classification.</p>
 
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>Description</th>
-              <th>Execution Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>smollm_system_one.py</code></td>
-              <td>Full PyTorch architecture adapting SmolLM-135M with Noul, Choice, and Score heads.</td>
-              <td><strong>67 ms</strong> (Full prefill &amp; decision)</td>
-            </tr>
-            <tr>
-              <td><code>train_rlcd.py</code></td>
-              <td>End-to-end RLCD training loop with Brier loss, ECE metrics, and dataset loaders.</td>
-              <td>~3 mins on Apple Silicon</td>
-            </tr>
-            <tr>
-              <td><code>generate_experiment_charts.py</code></td>
-              <td>Publication plotting script for reliability curves and latency benchmarks.</td>
-              <td>~2 seconds</td>
-            </tr>
-            <tr>
-              <td><code>jev_poc.py</code></td>
-              <td>Pure NumPy standalone reference prototype (zero external dependencies).</td>
-              <td>Instantaneous</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+  <h3>The Wrong Turn: Bolting Untrained Linear Heads onto SmolLM</h3>
+  <p>In our initial prototype (<code>smollm_system_one.py</code>, v1), we attempted to make SmolLM-135M into a "System One model" by surgically excising its pretrained language modeling head (<code>lm_head</code>) and attaching three custom, randomly initialized PyTorch modules:</p>
+  <ul>
+    <li><code>NoulHead</code>: An untrained <code>nn.Linear(hidden_dim, 1)</code> followed by a sigmoid activation.</li>
+    <li><code>ChoiceHead</code>: An untrained <code>nn.Linear(hidden_dim, num_choices)</code> followed by a softmax.</li>
+    <li><code>ScoreHead</code>: An untrained <code>nn.Linear(hidden_dim, num_bins)</code> followed by a softmax over ordinal bins and an expectation $\mathbb{E}[S]=\sum_i i\,p_i$.</li>
+  </ul>
 
-      <pre><code class="language-bash"># Run the full end-to-end inference benchmark on SmolLM-135M
-python3 smollm_system_one.py</code><span class="code-badge">Terminal</span></pre>
+  <p>The code compiled. It executed. It returned structured dictionaries in less than 50 milliseconds. And every single number it produced was <strong>complete mathematical noise</strong>.</p>
 
-      <div class="callout green">
-        <div class="callout-title">The Future of AI is Not a Chatbot</div>
-        <p>
-          We are moving into an era where AI agents execute millions of autonomous transactions per second. They do not have time to chat. They do not have time to deserialize JSON.
-        </p>
-        <p style="margin-bottom: 0;">
-          By discarding the vocabulary head and training models with RLCD, we unlock the true promise of AI in software: <strong>sub-100ms, hyper-calibrated, zero-token intelligence.</strong>
-        </p>
-      </div>
-    </section>
+  <p>Because these linear projection layers were randomly initialized, they possessed zero knowledge of language, semantics, or task intent. When the model evaluated a ticket, it reported $P(\text{True}) = 0.505$ on binary questions and uniform probabilities ($\approx 0.250$ across four options) on choice questions. By throwing away the <code>lm_head</code>, we had discarded the entire lexical and semantic projection space that the transformer had learned across trillions of tokens during pretraining.</p>
 
-    <!-- Article Footer & Tags -->
+  <p>Worse, the headline benchmarks reported in our initial POC script (<code>jev_poc.py</code>) were artificially fabricated: the script used <code>time.sleep()</code> to mock network latency, hardcoded a comparison against an arbitrary "1200ms autoregressive baseline," and computed an "Expected Calibration Error reduction from 28.4% to 2.1%" using synthetically hardcoded soft targets (<code>soft[label] = 0.8</code>). That was circular and meaningless.</p>
+
+  <h3>The Correction: Reading the Pretrained Logits</h3>
+  <p>The genuine reproduction—implemented in <code>jev_scoring.py</code> (v2)—restored the original pretrained <code>lm_head</code> intact. By framing decisions as single-token multiple choice questions and reading the logits directly from the existing vocabulary projections (as detailed in Part 3), we required <strong>zero new parameters, zero random weights, and zero fine-tuning</strong> to extract genuine semantic judgments from the model.</p>
+
+  <h3>Measured Results on Hardware</h3>
+  <p>We executed rigorous empirical benchmarks comparing next-token scoring against full autoregressive generation. The tests were run on an <strong>Apple M1 machine with 8GB unified memory, using the PyTorch MPS backend in fp32 precision</strong>. The benchmark tasked each model with triaging the critical payment gateway outage ticket described in Part 1 into one of four teams: <code>billing</code>, <code>auth</code>, <code>infrastructure</code>, or <code>frontend</code>.</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Model Architecture</th>
+          <th>Inference Method</th>
+          <th>Latency</th>
+          <th>Speedup Factor</th>
+          <th>Output Tokens</th>
+          <th>Syntactic Integrity</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>SmolLM-135M</strong> (Base)</td>
+          <td>Next-Token Scoring (v2)</td>
+          <td><strong>60.1 ms</strong></td>
+          <td><strong>26.1x faster</strong></td>
+          <td>0 tokens</td>
+          <td>Valid mathematical distribution</td>
+        </tr>
+        <tr>
+          <td><strong>SmolLM-135M</strong> (Base)</td>
+          <td>Autoregressive Generation</td>
+          <td>1,568.0 ms</td>
+          <td>1.0x (baseline)</td>
+          <td>40 tokens</td>
+          <td><strong>Malformed / Schema Failure</strong></td>
+        </tr>
+        <tr>
+          <td><strong>SmolLM2-135M-Instruct</strong></td>
+          <td>Next-Token Scoring (v2)</td>
+          <td><strong>58.5 ms</strong></td>
+          <td><strong>19.5x faster</strong></td>
+          <td>0 tokens</td>
+          <td>Valid mathematical distribution</td>
+        </tr>
+        <tr>
+          <td><strong>SmolLM2-135M-Instruct</strong></td>
+          <td>Autoregressive Generation</td>
+          <td>1,143.0 ms</td>
+          <td>1.0x (baseline)</td>
+          <td>40 tokens</td>
+          <td>Valid JSON</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The empirical latency differential is dramatic: scoring executes in <strong>58.5ms to 60.1ms</strong>, while generation requires <strong>1,143ms to 1,568ms</strong>, yielding a real-world speedup of <strong>~19.5x to 26.1x</strong>. Furthermore, scoring required zero output tokens, whereas generation consumed 40 output tokens per call.</p>
+
+  <p>The gap is not fixed &mdash; it grows with how much text you generate, because scoring is a single constant-cost forward pass while generation pays for every token. We measured this directly on SmolLM-135M by sweeping the output-token budget (median of repeated runs, produced by <code>bench_latency.py</code>):</p>
+
+  <div class="figure-box">
+    <div class="code-badge">MEASURED &mdash; results/latency_benchmark.json</div>
+    <img src="./assets/measured_latency_benchmark.png" alt="Measured latency: constant ~51ms scoring vs generation rising to ~2794ms at 100 tokens" style="width:100%;border-radius:8px;">
+    <div class="figure-caption">Figure: real measured latency on Apple M1 / MPS. Next-token scoring is a flat ~51&nbsp;ms regardless of the decision; autoregressive generation climbs from ~46&nbsp;ms (1 token) to ~2,794&nbsp;ms (100 tokens), roughly 27&nbsp;ms per token &mdash; a ~55&times; gap by 100 tokens. This chart is generated from measured data, unlike the illustrative charts in <code>assets/</code> that were hand-drawn to convey intuition.</div>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">The Failure of Generation: Real Malformed Output</div>
+    <p>The speedup is only half the story. When base SmolLM-135M was asked to generate a JSON response adhering to schema, it broke down. This is the actual, verbatim text it emitted (truncated at the 40-token limit):</p>
+    <p><code>```<br>{<br>&nbsp;&nbsp;&nbsp;&nbsp;"choice": "1",<br>&nbsp;&nbsp;&nbsp;&nbsp;"message": "Our payment gateway is returning 500 errors for all European Mastercard transactions. Checkout is down and customers</code></p>
+    <p>It opened a stray Markdown code fence, wrote <code>"choice": "1"</code> (which was not one of the four allowed options), and then began echoing the input state instead of answering &mdash; running until it exhausted its token budget, never closing the JSON object. Next-token scoring, by contrast, is <em>structurally immune</em> to schema corruption: because it normalizes logits across a fixed set of indices, its outputs are guaranteed to be syntactically valid probability distributions.</p>
+  </div>
+
+  <h3>The Honest Accuracy Caveat: Speed Does Not Equal Intelligence</h3>
+  <p>We must state an unvarnished truth that most performance benchmarks omit: <strong>while both 135M parameter models scored in ~60ms, neither model possessed the semantic capability to route the incident correctly</strong>.</p>
+
+  <p>When presented with the payment gateway 502 failure on <code>/api/v2/pay</code>, both 135M models assigned the highest probability mass to <code>frontend</code>, with a low confidence score of approximately <strong>0.11&ndash;0.12</strong> (essentially random noise across the four options). A 135-million parameter base model simply lacks the reasoning capacity to infer that a 502 error during checkout represents a backend billing gateway failure.</p>
+
+  <p>This observation matches the empirical scaling laws reported by the maintainers of <code>Meanblock/JEV-CPU</code>. In their published community benchmarks across open-weight models evaluated on CPU hardware, accuracy scales directly with parameter count:</p>
+  <ul>
+    <li><strong>Qwen3-0.6B (fp32, ~2.4GB RAM):</strong> Achieves balanced accuracy of only <strong>0.44</strong> (latency ~1s on an 8GB CPU).</li>
+    <li><strong>MiniCPM5-2B:</strong> Balanced accuracy climbs to <strong>0.686</strong>.</li>
+    <li><strong>Qwen3.5-4B:</strong> Balanced accuracy reaches <strong>0.813</strong>.</li>
+  </ul>
+
+  <p>There is also an instructive nuance observed in our tests: while <code>SmolLM2-135M-Instruct</code> mis-routed the ticket under single-token scoring, when allowed to generate tokens freely, its generative continuation happened to articulate the word <code>"billing"</code>. In sub-billion parameter models, the conditional distribution over vocabulary tokens at the first position after a prompt does not always perfectly mirror the model's multi-step generative rollouts. To achieve both blazing speed and high classification accuracy, one needs two ingredients: a model with sufficient capacity (at least 2B to 4B parameters) and deliberate calibration training via RLCD.</p>
+
+  <h3>Comparison to Avi Chawla's SGLang Approach</h3>
+  <p>Our local implementation in <code>jev_scoring.py</code> operates in-process via Hugging Face Transformers on Apple Silicon. By contrast, Avi Chawla demonstrated how to build a local Jev reproduction using <strong>SGLang's <code>/v1/score</code> endpoint</strong> targeting models such as Qwen2.5-0.5B-Instruct and Qwen3-4B. The underlying mathematical mechanism is identical: both methods bypass autoregression, extract logits at designated token positions, and apply restricted softmax. However, Avi's SGLang architecture targets production serving: it utilizes continuous batching, RadixAttention for KV-cache reuse across prompts, and multi-threaded request scheduling on local server hardware.</p>
+</section>
+
+<!-- Part 5 -->
+<section id="part-5">
+  <h2>Part 5: RLCD, Properly (The Part Nobody Reproduces)</h2>
+
+  <p>Open-source reproductions like <code>Meanblock/JEV-CPU</code> and Avi Chawla's SGLang tutorials reproduce Jev's <em>inference mechanism</em>. They demonstrate how to extract single-token logits via restricted softmax. But Avi himself is explicit about a critical limitation: <strong>this reproduces only the inference path, not Jev's weights, RLCD training, or calibration</strong>.</p>
+
+  <p>Avi highlights a fundamental calibration pitfall: if restricted softmax assigns a probability of $0.91$ to an option, that simply means option A captured 91% of the relative logit mass among the options provided in the prompt. It does <strong>not</strong> mean the model has a 91% probability of being correct. In raw, uncalibrated pretrained LLMs, logit distributions are notoriously overconfident or erratic. To convert raw logit mass into genuine, mathematically sound probabilities, the model must be trained with <strong>Reinforcement Learning for Calibrated Decisions (RLCD)</strong>.</p>
+
+  <h3>Formulating RLCD as a Reinforcement Learning System</h3>
+  <p>People hear "RL" and picture ChatGPT-style RLHF, but RLCD is a different animal. The cleanest way to see it is to name the four RL ingredients explicitly &mdash; <strong>agent, environment, action space, and reward</strong> &mdash; and notice that here the reward is a fixed piece of <em>math</em>, not a learned model of human taste.</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead><tr><th>RL ingredient</th><th>In RLCD</th><th>Concrete example (ticket routing)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Agent / Policy $\pi_\theta$</strong></td><td>The transformer plus its logit-scoring head, mapping a state + question to a distribution $\mathbf{p}=[p_1,\dots,p_K]$ over the declared options.</td><td>Reads the ticket, emits <code>{billing: .68, technical: .31, account: .01}</code>.</td></tr>
+        <tr><td><strong>Environment / State $s$</strong></td><td>The prompt: the input payload, the question, and the option definitions. It is <em>static</em> &mdash; one step, no multi-turn rollout.</td><td>"I was charged twice&hellip;" plus the three team definitions.</td></tr>
+        <tr><td><strong>Action space $\mathcal{A}$</strong></td><td>The probability simplex $\Delta^K$ over the <em>declared options</em> &mdash; <strong>not</strong> the 49k-token vocabulary. The action is the whole distribution, not a sampled token.</td><td>Any point in the triangle over {billing, technical, account}.</td></tr>
+        <tr><td><strong>Reward $R$</strong></td><td>A fixed <strong>strictly proper scoring rule</strong> comparing $\mathbf{p}$ to the observed outcome. Automated, differentiable, no learned reward model.</td><td>A Brier / log score, computed once the ticket's true team is known.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Because each episode is a single step (state in, distribution out, reward), the "RL" collapses to optimizing the policy so its reported probabilities maximize an automated proper-scoring reward. There is no value network, no PPO clip, no multi-step rollout &mdash; but the framing matters, because the <em>reward</em> is precisely what forces honesty about uncertainty.</p>
+
+  <h3>Does RLCD need SFT-style labels? (RLHF vs RLVR vs RLCD)</h3>
+  <p>Here is the crux, and a common intuition is right in spirit: RLCD does <strong>not</strong> depend on a human writing gold answers the way supervised fine-tuning (SFT) does, and it does <strong>not</strong> train a learned reward model the way RLHF does. Its reward is <em>computed</em> &mdash; like RLVR's verifier, the system checks the answer and hands back a number automatically. There is one honest caveat, stated precisely below.</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead><tr><th></th><th>RLHF</th><th>RLVR</th><th>RLCD</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Reward source</strong></td><td>A <em>learned</em> reward model of human preferences</td><td>An automated <em>verifier</em> (unit test, math checker): binary 0/1</td><td>An automated <em>proper scoring rule</em> vs the outcome: smooth, in $[0,1]$</td></tr>
+        <tr><td><strong>Humans in the loop?</strong></td><td>Yes &mdash; preference labels + reward-model training</td><td>No &mdash; but needs a checkable task</td><td>No hand-written gold answers &mdash; but needs an <em>outcome</em> to score against</td></tr>
+        <tr><td><strong>Effect on confidence</strong></td><td>Rewards conviction/style &rarr; overconfident</td><td>Collapses to 0 or 1 &rarr; no nuance</td><td>Maximized only by telling the truth about $p$ &rarr; calibrated</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>So "they set up the experiment so the system verifies and gets its own reward" is exactly right about the <em>reward mechanism</em>. The subtlety is what the reward checks against: a proper scoring rule $S(\mathbf{p}, y)$ is meaningless without an outcome $y$ (or an outcome distribution $\mathbf{q}$). What makes RLCD cheap is that this outcome does <strong>not</strong> have to be a hand-labeled dataset &mdash; it can be harvested automatically. That is the whole trick, and it is what the next section builds.</p>
+
+  <h3>The Core Engine: Strictly Proper Scoring Rules</h3>
+  <p>In standard classification training, models are often evaluated on accuracy (0/1 loss). But 0/1 accuracy is an improper objective for calibration: an agent maximizing expected accuracy is incentivized to report degenerate one-hot distributions ($[1.0, 0.0]$) whenever its subjective belief exceeds 50%, completely obliterating nuanced uncertainty.</p>
+
+  <p>A scoring rule $S(\mathbf{p}, y)$ assigns a numerical reward to a predicted probability distribution $\mathbf{p}$ upon observing outcome $y$. A scoring rule is defined as <strong>strictly proper</strong> if and only if the expected reward under the true distribution $\mathbf{q}$ is uniquely maximized when the agent reports its true beliefs $\mathbf{p} = \mathbf{q}$:</p>
+
+  <div class="math-card">
+    <div class="formula">
+      $$\mathbb{E}_{y \sim \mathbf{q}}[S(\mathbf{p}, y)] \le \mathbb{E}_{y \sim \mathbf{q}}[S(\mathbf{q}, y)], \quad \text{with equality if and only if } \mathbf{p} = \mathbf{q}$$
+    </div>
+    <div class="explanation">
+      Under a strictly proper scoring rule, any misrepresentation of probability—whether overconfident exaggeration or defensive underconfidence—mathematically reduces the agent's expected reward.
+    </div>
+  </div>
+
+  <p>Two strictly proper scoring rules form the foundation of calibrated decision theory:</p>
+
+  <p><strong>1. The Multi-Class Brier Score (Negative Mean Squared Error):</strong></p>
+  <div class="math-card">
+    <div class="formula">
+      $$R_{\text{Brier}}(\mathbf{p}, \mathbf{y}) = 1 - \frac{1}{2}\sum_{k=1}^K (p_k - y_k)^2$$
+    </div>
+    <div class="explanation">
+      Where $\mathbf{y}$ is the target distribution vector. The Brier score penalizes Euclidean distance in probability space.
+    </div>
+  </div>
+
+  <p><strong>2. The Logarithmic Score (Cross-Entropy / Log-Loss):</strong></p>
+  <div class="math-card">
+    <div class="formula">
+      $$R_{\text{Log}}(\mathbf{p}, \mathbf{y}) = \sum_{k=1}^K y_k \ln(p_k)$$
+    </div>
+    <div class="explanation">
+      The logarithmic rule penalizes the negative surprise of observed outcomes, imposing severe penalties on overconfident incorrect assignments.
+    </div>
+  </div>
+
+  <h3>The Murphy Decomposition: Why Brier Minimization Enforces Calibration</h3>
+  <p>In 1973, statistician Allan H. Murphy proved that the Brier score can be decomposed into three orthogonal, additive components:</p>
+
+  <div class="math-card">
+    <div class="formula">
+      $$\text{Brier Score} = \text{Reliability} - \text{Resolution} + \text{Uncertainty}$$
+    </div>
+    <div class="explanation">
+      Equivalently expressed in mean squared error terms: $\text{MSE} = \text{Reliability (ECE)}^2 - \text{Resolution} + \text{Uncertainty}$.
+    </div>
+  </div>
+
+  <p>Understanding these three terms reveals exactly how RLCD shapes model behavior:</p>
+  <ul>
+    <li><strong>Reliability (Calibration Error):</strong> Measures the distance between predicted probabilities and empirical outcome frequencies. If the model groups instances into a 70% bin, do those instances occur 70% of the time? Minimizing the Brier score directly forces Reliability toward zero, eradicating Expected Calibration Error (ECE).</li>
+    <li><strong>Resolution:</strong> Measures how far the model's predictions diverge from the global base-rate distribution. A lazy model that always predicts the background prior probability has zero calibration error, but its resolution is zero—it provides no useful information. In Murphy's decomposition, Resolution enters with a negative sign in error formulation (or a positive sign in reward formulation). Maximizing reward forces the model to make bold, decisive predictions whenever the evidence supports them.</li>
+    <li><strong>Uncertainty:</strong> The intrinsic aleatoric entropy of the environment $p(1-p)$. This is a fixed property of the data distribution and cannot be altered by the model.</li>
+  </ul>
+
+  <p>By optimizing an RL policy against a strictly proper scoring rule, RLCD forces the transformer to maximize sharpness (Resolution) subject to the unyielding constraint that its reported confidences never lie about empirical frequencies (Reliability).</p>
+
+  <h3>What "Calibrated Decisions" (CD) Means in Production</h3>
+  <p>In practical software engineering, calibrated decisions transform probability numbers into reliable service-level contracts:</p>
+  <ul>
+    <li>If Jev evaluates 1,000 disparate tickets and assigns each an answer confidence of $0.90$, exactly 900 of those decisions must be empirically correct.</li>
+    <li>If the model assigns a confidence of $0.52$, it explicitly communicates that the input resides on an ambiguous decision boundary.</li>
+    <li>Confidence becomes strictly monotonic with empirical accuracy: higher confidence guaranteed to yield higher precision.</li>
+  </ul>
+
+  <h3>Build the dataset first, then train &mdash; end to end</h3>
+  <p>Reading logits (Part 3) gives you a working decision engine on day one, but an <em>uncalibrated</em> one. To make the probabilities trustworthy you train with RLCD, and that training is only as good as the dataset you build for it. Here is the full pipeline, in the order you would actually do it.</p>
+
+  <p><strong>Step 1 &mdash; Define the decision schema.</strong> Pin down the exact thing you are deciding: the state you will feed in, the question, and the closed option set (plus an <code>OTHER/ESCALATE</code> escape). This <em>is</em> your label space. For routing: options = {billing, technical, account, other}.</p>
+
+  <p><strong>Step 2 &mdash; Collect states.</strong> Pull real inputs from wherever the decision already happens &mdash; historical support tickets, logged transactions, past reviews. You are not writing answers yet, just gathering the raw states you want the model to judge.</p>
+
+  <p><strong>Step 3 &mdash; Attach outcomes as <em>soft</em> targets (the key step).</strong> Do <strong>not</strong> use one-hot gold labels: training a distribution against $[1,0,0]$ with cross-entropy drives logits to explode toward probability 1.0 and destroys calibration. Instead attach a soft target $\mathbf{q}$ that reflects genuine ambiguity, harvested automatically from any of the three outcome sources introduced above:</p>
+  <ul>
+    <li><strong>Logged outcomes:</strong> which team actually closed the ticket, whether the flagged charge was reversed &mdash; free ground truth from the environment. Aggregate repeated/near-duplicate states into a frequency to get softness.</li>
+    <li><strong>Ensemble votes:</strong> run $N$ cheap LLM judges with temperature/persona jitter; their vote split <em>is</em> $\mathbf{q}$. If 12 of 16 say billing and 4 say account, $\mathbf{q}=[0.75,0,0.25]$.</li>
+    <li><strong>Human-agreement datasets</strong> when you have them: <code>takala/financial_phrasebank</code> ships tiered annotator agreement; <code>hatexplain</code> ships multi-annotator labels. The recorded disagreement is your softness for free.</li>
+  </ul>
+
+  <p><strong>Step 4 &mdash; Assemble the training set.</strong> Each row is just the prompt, the soft target, the (arg-max) hard label for accuracy tracking, and the option count &mdash; the exact shape <code>train_rlcd.py</code> consumes:</p>
+  <div class="figure-box">
+    <div class="code-badge">one training row</div>
+<pre><code class="language-python">{
+  "text": "State: 'I was charged twice for the same subscription.'\n"
+          "Question: Route this ticket.\nOptions: [billing, technical, account, other]",
+  "soft_target": [0.75, 0.05, 0.20, 0.00],   # q: harvested outcome distribution, NOT one-hot
+  "hard_label": 0,                            # argmax, only for accuracy reporting
+  "num_options": 4
+}</code></pre>
+  </div>
+
+  <p><strong>Step 5 &mdash; Train against a proper scoring rule.</strong> The loss is a strictly proper scoring rule evaluated against the soft target &mdash; here a Brier + log-loss blend. Nothing else changes about the model; you are only reshaping <em>how confident</em> it is allowed to be:</p>
+  <div class="figure-box">
+    <div class="code-badge">train_rlcd.py &mdash; the RLCD step</div>
+<pre><code class="language-python"># probs: model's restricted-softmax distribution over the K options
+# soft_targets: q, the harvested outcome distribution (soft, not one-hot)
+brier = torch.mean(torch.sum((probs - soft_targets) ** 2, dim=-1))      # proper scoring rule
+logl  = -torch.mean(torch.sum(soft_targets * torch.log(probs.clamp_min(1e-12)), dim=-1))
+loss  = 0.7 * brier + 0.3 * logl        # both are minimized only when p == q
+loss.backward(); optimizer.step()</code></pre>
+  </div>
+
+  <p><strong>Step 6 &mdash; Measure calibration, then iterate.</strong> Accuracy alone will not tell you if the probabilities are honest. Bin predictions by confidence and compare each bin's confidence to its empirical accuracy &mdash; that gap is Expected Calibration Error (ECE), and a reliability curve visualizes it. Drive ECE down, re-harvest outcomes where the model is over/under-confident, and repeat. <code>train_rlcd.py</code> logs val accuracy and ECE every epoch and works out-of-the-box on the offline synthetic generator or on <code>financial_phrasebank</code>.</p>
+
+  <div class="callout">
+    <div class="callout-title">Honest disclosure about our own ECE numbers</div>
+    <p>Our repository's earlier prototype reported ECE dropping from 28.4% to 2.1%. Those numbers were fit against <em>synthetically hardcoded</em> soft targets (e.g. <code>soft[label] = 0.8</code>), so they demonstrate that the training loop converges &mdash; they are <strong>not</strong> a measured calibration result on real annotator disagreement, and we do not present them as one. Producing a genuine reliability curve requires running Step 3 with real logged or ensemble outcomes, which is exactly the work a scoring-only reproduction (JEV-CPU, Avi Chawla) deliberately skips.</p>
+  </div>
+</section>
+
+<!-- Part 6 -->
+<section id="part-6">
+  <h2>Part 6: When to Use Scoring vs Generation vs Structured Output</h2>
+
+  <p>With three distinct paradigms now available for interacting with language models—next-token scoring, autoregressive generation, and grammar-constrained decoding—how should an engineer architect a production system? Avi Chawla proposed a clean heuristic that provides immediate architectural clarity:</p>
+
+  <div class="figure-box">
+    <div class="callout-title">The Output-Space Decision Axiom</div>
+    <p><strong>Score</strong> when the output space is known, finite, and closed, and the system requires a decision label, probability distribution, or confidence metric.</p>
+    <p><strong>Generate</strong> when the output space is open-ended, creative, or unbounded, and the system requires human prose, synthesis, or complex code.</p>
+  </div>
+
+  <p>A widespread misconception among practitioners is that <strong>Structured Output engines</strong> (such as Outlines, Instructor, or JSON mode in vLLM) are equivalent to next-token scoring. They are not. Structured output engines use context-free grammars or regular expressions to mask out invalid tokens from the vocabulary during autoregressive generation. While this guarantees that the output conforms to a JSON schema, <em>the model is still executing an autoregressive loop</em>: it still computes key-value caches, decodes tokens sequentially, and incurs latency proportional to output length.</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Workload Requirement</th>
+          <th>Next-Token Scoring (System One)</th>
+          <th>Structured Output (JSON Mode / Outlines)</th>
+          <th>Free Autoregressive Generation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Latency</strong></td>
+          <td>Ultra-low (50ms – 100ms)</td>
+          <td>Moderate to High (500ms – 2,500ms)</td>
+          <td>High (1,000ms – 5,000ms+)</td>
+        </tr>
+        <tr>
+          <td><strong>Compute Overhead</strong></td>
+          <td>Single prefill pass; 0 output tokens</td>
+          <td>Full autoregressive decoding loop</td>
+          <td>Full autoregressive decoding loop</td>
+        </tr>
+        <tr>
+          <td><strong>Output Schema</strong></td>
+          <td>Discrete classes, probabilities, expectations</td>
+          <td>Arbitrary complex JSON schemas</td>
+          <td>Unstructured natural language</td>
+        </tr>
+        <tr>
+          <td><strong>Uncertainty Visibility</strong></td>
+          <td>Exposes complete probability vector</td>
+          <td>Opaque (emits only sampled tokens)</td>
+          <td>Opaque (emits only sampled tokens)</td>
+        </tr>
+        <tr>
+          <td><strong>Typical Use Cases</strong></td>
+          <td>Triage routing, safety guardrails, spam detection, sentiment</td>
+          <td>Extracting multi-field entities from contracts or medical records</td>
+          <td>Drafting emails, open coding, document summarization</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>When to Choose Next-Token Scoring</h3>
+  <ul>
+    <li><strong>Operational Routing and Triage:</strong> Dispatching tickets, webhooks, or customer emails to engineering squads based on content.</li>
+    <li><strong>Safety Guardrails &amp; Policy Compliance:</strong> Evaluating inbound prompts against toxicity, jailbreak, or PII policies using the Noul binary primitive before dispatching to frontier models.</li>
+    <li><strong>Automated Data Labeling Pipelines:</strong> High-throughput classification of millions of unstructured documents into fixed taxonomy buckets where confidence thresholds govern automated vs. manual review.</li>
+    <li><strong>Cost-Sensitive Scale:</strong> Workloads processing millions of requests per day where paying for output tokens is economically unsustainable.</li>
+  </ul>
+
+  <h3>The Hard Boundaries of Next-Token Scoring</h3>
+  <p>Next-token scoring is not a universal replacement for LLMs. It operates under strict structural boundaries:</p>
+  <ul>
+    <li><strong>Strictly Closed Output Spaces:</strong> Scoring cannot extract arbitrary customer names, generate new code, or synthesize an explanation. If the answer cannot be enumerated into a bounded candidate set before inference, scoring cannot be used.</li>
+    <li><strong>The Candidate Set Limit:</strong> Choice primitives scale effectively up to approximately 255 options. Beyond that, prompt context bloat and token-position attention dilution degrade the fidelity of the logit distribution.</li>
+    <li><strong>Requirement for an Escape Option:</strong> Because restricted softmax normalizes probability across the candidate set, you must always provide an explicit <code>OTHER / ESCALATE</code> option to prevent hallucinated probability assignment on out-of-distribution inputs.</li>
+    <li><strong>Model Scale Dependency:</strong> Scoring a 135M model takes 60ms but produces random answers. Reliable production scoring requires models with sufficient reasoning capacity (2B to 4B parameters minimum) calibrated via RLCD.</li>
+  </ul>
+</section>
+
+<!-- Part 7 -->
+<section id="part-7">
+  <h2>Part 7: Swapping the LLM Judge for a Jev</h2>
+
+  <p>Here is a use case that clicks the moment you see it: <strong>LLM-as-a-judge</strong>. Teams routinely spend a big generative model to grade another model's output &mdash; rate this answer 1&ndash;5, is A better than B, is this response faithful to the source. Almost every one of those is a <em>bounded decision</em>, which means it is a Jev primitive in disguise.</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead><tr><th>Judge task</th><th>Today (generate + parse)</th><th>Jev primitive</th></tr></thead>
+      <tbody>
+        <tr><td>Pairwise: is A or B better?</td><td>write "A"/"B" + a rationale</td><td><strong>Choice</strong> {A, B, tie} &rarr; P(A), P(B), P(tie)</td></tr>
+        <tr><td>Rubric rating 1&ndash;5</td><td>write an integer + a rationale</td><td><strong>Score</strong> &rarr; distribution + $\mathbb{E}[\text{score}]$</td></tr>
+        <tr><td>Faithful? toxic? correct?</td><td>write "yes"/"no" + a rationale</td><td><strong>Noul</strong> &rarr; calibrated $P(\text{true})$</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">This is not speculative &mdash; G-Eval already does it</div>
+    <p>The popular <strong>G-Eval</strong> judge weights its rubric score by the token probabilities of each rating level: $\text{score} = \sum_i p(s_i)\, s_i$. That is <em>exactly</em> Jev's <code>Score</code> primitive. G-Eval's authors adopted it because the raw single integer correlated poorly with humans; the probability-weighted score is far better. Jev just reads those probabilities <strong>natively</strong> from one forward pass instead of via a logprobs API or repeated temperature sampling &mdash; and extends it to pairwise (Choice) and binary (Noul).</p>
+  </div>
+
+  <p>Two of the judge's worst-documented failures become cheap to fix:</p>
+  <ul>
+    <li><strong>Position bias.</strong> Pairwise judges flip <strong>22&ndash;30% of verdicts</strong> when you swap A and B. The standard fix is to run both orderings and average &mdash; which doubles a slow, paid call for a generative judge, but is essentially free at <strong>0 output tokens</strong>. Our <code>jev_judge.py</code> does exactly this and flags when the winner flipped.</li>
+    <li><strong>Mis-calibrated scores.</strong> A generated "4/5" is not a probability. A Jev judge returns a real distribution (ties become visible), and once trained with RLCD (Part 5) its confidence becomes a usable routing threshold: auto-accept high-confidence verdicts, send the rest to a human.</li>
+  </ul>
+
+  <p>Real output from <code>jev_judge.py</code> on <code>SmolLM2-135M-Instruct</code> &mdash; the model is far too small to have good taste (verdicts hover near chance), but the mechanism, the G-Eval-style expectation, and the order-swap debiasing all work, and even here faithfulness comes out directionally right:</p>
+
+  <div class="figure-box">
+    <div class="code-badge">jev_judge.py &mdash; measured</div>
+<pre><code class="language-python">Pairwise (A = good answer, B = wrong answer), order-swap debiased:
+  winner: tie   probs {A: 0.297, B: 0.290, tie: 0.414}   position_bias_flip: False
+
+Rubric (Score 0..3) on the good answer:
+  E[score] = 1.39   dist {0: .264, 1: .224, 2: .374, 3: .138}
+
+Faithfulness (Noul):
+  supported claim   P = 0.722
+  unsupported claim P = 0.658</code></pre>
+    <div class="figure-caption">A capable, RLCD-calibrated model sharpens these into trustworthy verdicts. Full research writeup, citations, and the reranker variant: <code>docs/jev_as_judge.md</code>.</div>
+  </div>
+
+  <p>The one thing you give up is the written rationale &mdash; scoring returns no prose. The pragmatic pattern: score the <em>verdict</em> on every item for free, and generate an explanation only for the small fraction of low-confidence cases that get routed to a human.</p>
+</section>
+
+<!-- Part 8 -->
+<section id="part-8">
+  <h2>Part 8: Reproduction Toolkit</h2>
+
+  <p>To inspect, benchmark, and reproduce the findings documented in this article, all code and experimental artifacts are provided in the repository:</p>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>File Path</th>
+          <th>Role in Reproduction</th>
+          <th>Execution Command</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>jev_scoring.py</code></td>
+          <td>The corrected, production-grade next-token scoring engine. Reads vocabulary logits from the pretrained <code>lm_head</code>, verifies single-token labels, and computes restricted softmax distributions and expectations.</td>
+          <td><pre><code class="language-bash">python3 jev_scoring.py</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>smollm_system_one.py</code></td>
+          <td>The historical v1 prototype preserved for architectural comparison. Demonstrates why attaching untrained linear projection heads onto frozen transformers produces meaningless noise.</td>
+          <td><pre><code class="language-bash">python3 smollm_system_one.py</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>train_rlcd.py</code></td>
+          <td>End-to-end RLCD training pipeline. Demonstrates policy optimization against multi-class Brier score rewards using soft target distributions and tracks Expected Calibration Error (ECE).</td>
+          <td><pre><code class="language-bash">python3 train_rlcd.py</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>results/measured_results.json</code></td>
+          <td>The raw, unedited empirical benchmark recordings executed on Apple M1 MPS hardware (measuring latency, token counts, and output integrity).</td>
+          <td><pre><code class="language-bash">cat results/measured_results.json</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>jev_judge.py</code></td>
+          <td>Jev-style LLM-as-a-judge: pairwise (order-swap debiased), G-Eval-style rubric scoring, and faithfulness &mdash; built on <code>jev_scoring.py</code>. See <code>docs/jev_as_judge.md</code>.</td>
+          <td><pre><code class="language-bash">python3 jev_judge.py</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>bench_latency.py</code></td>
+          <td>Real latency-vs-output-length sweep producing <code>assets/measured_latency_benchmark.png</code> and <code>results/latency_benchmark.json</code>.</td>
+          <td><pre><code class="language-bash">python3 bench_latency.py</code></pre></td>
+        </tr>
+        <tr>
+          <td><code>docs/model_dissection.md</code></td>
+          <td>Download-and-dissect evidence that Qwen models are generative LLMs (not embeddings) and that <code>JEV-CPU</code> is a code framework, not a model.</td>
+          <td><pre><code class="language-bash">open docs/model_dissection.md</code></pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">Production Serving Recommendation</div>
+    <p>For engineering teams looking to deploy next-token scoring in high-concurrency production environments, we strongly recommend following Avi Chawla's architecture utilizing <strong>SGLang's <code>/v1/score</code> endpoint</strong>. By pairing a calibrated 2B–4B parameter model (such as Qwen3-4B) with SGLang's RadixAttention and continuous batching engine, you obtain enterprise-grade throughput and sub-100ms classification latency on standard local or cloud GPU infrastructure.</p>
+  </div>
+</section>
     <footer class="article-footer">
       <div class="tag-cloud">
         <a href="#" class="tag">Machine Learning</a>

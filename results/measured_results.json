@@ -1,0 +1,47 @@
+{
+  "_note": "REAL measured numbers from jev_scoring.py on an Apple M1 8GB laptop (MPS, fp32). Reproduce with: python3 jev_scoring.py [--model_id ...]. Nothing here is simulated. Accuracy is low because 135M models are tiny; that is the honest point (mechanism != accuracy).",
+  "machine": "Apple M1, 8GB unified memory, MPS backend, torch 2.14, transformers 5.17",
+  "runs": [
+    {
+      "model_id": "HuggingFaceTB/SmolLM-135M",
+      "note": "base model, not instruction-tuned",
+      "scoring": {
+        "is_outage_noul": 0.5221,
+        "route_team": {"choice": "frontend", "billing": 0.4266, "frontend": 0.4459, "security": 0.0788, "docs": 0.0487, "confidence": 0.1234, "correct": false},
+        "severity_score": {"expected": 0.36, "dist": {"0": 0.7812, "1": 0.1021, "2": 0.0934, "3": 0.0233}, "confidence": 0.5745, "correct": false}
+      },
+      "head_to_head_routing": {
+        "scoring_ms": 60.14,
+        "scoring_output_tokens": 0,
+        "generation_ms": 1568.34,
+        "generation_output_tokens": 40,
+        "generation_raw_text": "```\\n{\\n    \"choice\": \"1\", ... (malformed, '1' is not an option)",
+        "speedup_x": 26.08
+      }
+    },
+    {
+      "model_id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+      "note": "instruction-tuned, same size",
+      "scoring": {
+        "is_outage_noul": 0.569,
+        "route_team": {"choice": "frontend", "billing": 0.3515, "frontend": 0.439, "security": 0.1319, "docs": 0.0776, "confidence": 0.1129, "correct": false},
+        "severity_score": {"expected": 1.05, "dist": {"0": 0.4816, "1": 0.123, "2": 0.2578, "3": 0.1376}, "confidence": 0.1676, "correct": false}
+      },
+      "head_to_head_routing": {
+        "scoring_ms": 58.51,
+        "scoring_output_tokens": 0,
+        "generation_ms": 1142.65,
+        "generation_output_tokens": 40,
+        "generation_raw_text": "{\\n  \"choice\": \"billing\", ... (correct choice, but slow and needs parsing)",
+        "speedup_x": 19.53
+      }
+    }
+  ],
+  "honest_findings": [
+    "The scoring mechanism (read option-token logits from the KEPT lm_head, restricted softmax, one forward pass) is real and produces a genuine distribution from the pretrained model -- NOT the uniform 1/K noise that the earlier untrained bolt-on heads produced.",
+    "Scoring is ~20-26x faster than generation even on a 135M model on a laptop, with 0 output tokens; the gap widens on bigger models and longer generations, consistent with TypeSafe's 40-200x claim.",
+    "Accuracy is a SEPARATE axis from the mechanism. 135M models (base or instruct) are too small to route this ticket correctly -- both mis-route to 'frontend' with ~0.11 confidence (near chance). JEV-CPU reports 0.44 balanced accuracy at 0.6B, rising to 0.69 at 2B and 0.81 at 4B.",
+    "Nuance: on the instruct model, single-token letter-scoring mis-routed while free generation got 'billing' right. Tiny models' first-token distribution at the label position is not always aligned; capable models + calibration (RLCD) are what make scoring both fast AND accurate.",
+    "The autoregressive baseline on the base model emitted an INVALID choice ('1') and rambled -- concrete evidence that generation is both slower and structurally fragile."
+  ]
+}

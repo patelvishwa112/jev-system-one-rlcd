@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Build Your Own Jev (100% Local)</title>
+  <meta name="description" content="A deep dive into TypeSafe AI's Jev model, the System One paradigm, RLCD (Reinforcement Learning for Calibrated Decisions), and a hands-on guide to adapting SmolLM-135M for sub-70ms, zero-token software decisions.">
+  
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Charter:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- KaTeX for crisp mathematical formulas -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}]});"></script>
+
+  <style>
+    :root {
+      --bg-body: #ffffff;
+      --bg-surface: #fafafa;
+      --bg-subtle: #f4f4f5;
+      --bg-card: #ffffff;
+      --text-main: #242424;
+      --text-secondary: #6b6b6b;
+      --text-muted: #8b8b8b;
+      --border-light: #e5e5e5;
+      --border-subtle: #eaeaea;
+      --accent-primary: #1a8917; /* Medium green */
+      --accent-blue: #2563eb;
+      --accent-purple: #7c3aed;
+      --accent-amber: #d97706;
+      --accent-rose: #e11d48;
+      --code-bg: #18181b;
+      --code-text: #f4f4f5;
+      --font-serif: 'Charter', Georgia, Cambria, 'Times New Roman', serif;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-body: #0d1117;
+        --bg-surface: #161b22;
+        --bg-subtle: #21262d;
+        --bg-card: #161b22;
+        --text-main: #f0f6fc;
+        --text-secondary: #8b949e;
+        --text-muted: #6e7681;
+        --border-light: #30363d;
+        --border-subtle: #21262d;
+        --accent-primary: #2ea043;
+        --accent-blue: #58a6ff;
+        --accent-purple: #bc8cff;
+        --accent-amber: #f0883e;
+        --accent-rose: #f85149;
+        --code-bg: #090d13;
+        --code-text: #e6edf3;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-body);
+      color: var(--text-main);
+      font-family: var(--font-serif);
+      font-size: 20px;
+      line-height: 1.75;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Medium Top Navigation */
+    .nav-bar {
+      border-bottom: 1px solid var(--border-light);
+      position: sticky;
+      top: 0;
+      background: var(--bg-body);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+      padding: 14px 24px;
+    }
+
+    .nav-inner {
+      max-width: 1040px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-sans);
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-main);
+      font-weight: 800;
+      font-size: 19px;
+      letter-spacing: -0.5px;
+    }
+
+    .nav-brand span.badge {
+      background: var(--accent-primary);
+      color: #fff;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--text-main);
+      color: var(--bg-body);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .btn-github:hover {
+      opacity: 0.85;
+    }
+
+    /* Article Container */
+    .article-container {
+      max-width: 740px;
+      margin: 0 auto;
+      padding: 48px 20px 80px 20px;
+    }
+
+    .wide-container {
+      max-width: 1040px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    /* Header & Byline */
+    .article-header {
+      margin-bottom: 36px;
+    }
+
+    .publication-meta {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--accent-purple);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .publication-meta::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-purple);
+    }
+
+    h1.article-title {
+      font-family: var(--font-sans);
+      font-size: 44px;
+      line-height: 1.18;
+      font-weight: 800;
+      letter-spacing: -1.2px;
+      margin-bottom: 16px;
+      color: var(--text-main);
+    }
+
+    p.article-subtitle {
+      font-family: var(--font-sans);
+      font-size: 22px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+      font-weight: 400;
+      margin-bottom: 28px;
+    }
+
+    .author-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 0;
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-sans);
+      margin-bottom: 36px;
+    }
+
+    .author-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .author-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7, #ec4899);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .author-details h4 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .author-details p {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .read-stats {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    /* Editorial Cover Image */
+    .hero-media {
+      margin: 0 -20px 48px -20px;
+    }
+
+    .hero-media img {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      display: block;
+    }
+
+    .media-caption {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    /* Typography & Content Flow */
+    p {
+      margin-bottom: 28px;
+      color: var(--text-main);
+    }
+
+    h2 {
+      font-family: var(--font-sans);
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.6px;
+      line-height: 1.25;
+      margin: 54px 0 20px 0;
+      color: var(--text-main);
+    }
+
+    h3 {
+      font-family: var(--font-sans);
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      line-height: 1.35;
+      margin: 36px 0 16px 0;
+      color: var(--text-main);
+    }
+
+    ul, ol {
+      margin: 0 0 28px 28px;
+    }
+
+    li {
+      margin-bottom: 10px;
+    }
+
+    strong {
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: var(--text-muted);
+      text-underline-offset: 3px;
+      transition: text-decoration-color 0.2s ease;
+    }
+
+    a:hover {
+      text-decoration-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    blockquote {
+      border-left: 3px solid var(--text-main);
+      padding-left: 20px;
+      margin: 36px 0;
+      font-style: italic;
+      color: var(--text-secondary);
+      font-size: 22px;
+      line-height: 1.6;
+    }
+
+    /* Callout Boxes */
+    .callout {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-left: 4px solid var(--accent-blue);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 36px 0;
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .callout.purple { border-left-color: var(--accent-purple); }
+    .callout.amber { border-left-color: var(--accent-amber); }
+    .callout.green { border-left-color: var(--accent-primary); }
+    .callout.rose { border-left-color: var(--accent-rose); }
+
+    .callout-title {
+      font-weight: 700;
+      font-size: 17px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Code Blocks */
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.65;
+      padding: 22px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 32px 0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      position: relative;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      background: var(--bg-subtle);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-purple);
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: 14px;
+    }
+
+    .code-badge {
+      position: absolute;
+      top: 10px;
+      right: 14px;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #8b949e;
+      font-family: var(--font-sans);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    /* Comparison Tables */
+    .table-wrapper {
+      overflow-x: auto;
+      margin: 36px 0;
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      background: var(--bg-card);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      text-align: left;
+    }
+
+    th {
+      background: var(--bg-surface);
+      padding: 14px 18px;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border-light);
+      color: var(--text-main);
+    }
+
+    td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: var(--bg-subtle);
+    }
+
+    /* Math Formula Cards */
+    .math-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      padding: 24px;
+      margin: 32px 0;
+      text-align: center;
+    }
+
+    .math-card .formula {
+      font-size: 21px;
+      margin: 12px 0;
+      overflow-x: auto;
+    }
+
+    .math-card .explanation {
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      text-align: left;
+      margin-top: 14px;
+      border-top: 1px solid var(--border-light);
+      padding-top: 12px;
+    }
+
+    /* Interactive Simulator */
+    .interactive-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      padding: 28px;
+      margin: 44px 0;
+      font-family: var(--font-sans);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+    }
+
+    .interactive-card h3 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-main);
+    }
+
+    .sim-selector {
+      display: flex;
+      gap: 8px;
+      margin: 18px 0;
+      flex-wrap: wrap;
+    }
+
+    .sim-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.2s ease;
+    }
+
+    .sim-btn.active, .sim-btn:hover {
+      background: var(--text-main);
+      color: var(--bg-body);
+      border-color: var(--text-main);
+    }
+
+    .sim-state-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-main);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .sim-results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .sim-result-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .sim-result-panel h4 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .sim-metric-val {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      margin-bottom: 8px;
+    }
+
+    .sim-bar-bg {
+      background: var(--bg-subtle);
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .sim-bar-fill {
+      height: 100%;
+      background: var(--accent-primary);
+      border-radius: 4px;
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Embedded Chart Figures */
+    .figure-box {
+      margin: 40px 0;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+    }
+
+    .figure-box img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .figure-caption {
+      padding: 14px 20px;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-surface);
+      line-height: 1.5;
+    }
+
+    /* Clap & Share Footer */
+    .article-footer {
+      border-top: 1px solid var(--border-light);
+      padding-top: 40px;
+      margin-top: 60px;
+      font-family: var(--font-sans);
+    }
+
+    .tag-cloud {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+
+    .tag {
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 13px;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .tag:hover {
+      background: var(--border-light);
+      color: var(--text-main);
+    }
+
+    .action-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 0;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .clap-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      border: 1px solid var(--border-light);
+      padding: 8px 18px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-main);
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .clap-btn:hover {
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+      transform: scale(1.03);
+    }
+  </style>
+</head>
+<body>
+
+
+  <!-- Top Navigation -->
+  <nav class="nav-bar">
+    <div class="nav-inner">
+      <a href="#" class="nav-brand">
+        <span>Towards AI Systems</span>
+        <span class="badge">Research In Depth</span>
+      </a>
+      <div class="nav-actions">
+        <a href="https://github.com/patelvishwa112/jev-system-one-rlcd" class="btn-github" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          View Code & Experiments
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-container">
+    <header class="article-header">
+      <div class="publication-meta">Tutorial &middot; Hands-on &middot; 10 min read</div>
+      <h1 class="article-title">Build Your Own Jev (100% Local): Read Decisions Straight Out of an LLM</h1>
+      <p class="article-subtitle">A hands-on walkthrough: turn a small open model into a fast, generation-free decision engine on your laptop &mdash; no server, no retraining. (A companion piece to our deep-dive, told the tutorial way.)</p>
+      <div class="author-card">
+        <div class="author-info">
+          <div class="author-avatar">AI</div>
+          <div class="author-details">
+            <h4>Antigravity Research Team</h4>
+            <p>Hands-on ML tutorials &middot; in the spirit of Avi Chawla's "Build your own Jev"</p>
+          </div>
+        </div>
+        <div class="read-stats"><span>Sept 2026</span><br><span>Runnable Code</span></div>
+      </div>
+    </header>
+
+    <section>
+      <p>Let me show you how to turn an open-source LLM into a fast, local decision engine &mdash; the useful part of what TypeSafe's <strong>Jev</strong> does &mdash; without retraining anything.</p>
+
+      <p>We will do it with a small model on a laptop. No GPU cluster, no API bill. By the end you will have a single Python function that reads decisions straight out of one forward pass.</p>
+
+      <p>One thing to set expectations upfront: this reproduces Jev's <em>inference path</em>. It does not reproduce Jev's weights or its RLCD calibration. We will come back to that honestly at the end.</p>
+
+      <h2>Most LLM calls do not need generated text</h2>
+
+      <p>Here is the thing most pipelines get wrong. Many LLM calls do not need newly written text at all. The application already knows the possible answers &mdash; it only needs the model to <em>choose</em> one.</p>
+
+      <p>Suppose a support ticket comes in:</p>
+
+      <div class="callout">
+        <p style="margin:0;"><em>"I was charged twice for the same subscription."</em></p>
+      </div>
+
+      <p>The application has to send it to exactly one of three teams: <code>billing</code>, <code>technical support</code>, or <code>account access</code>.</p>
+
+      <p>A normal LLM call asks the model to <em>write</em> an answer. It might return a sentence, a label, or a JSON object. Your code then waits for that text, parses it, and pulls out the team.</p>
+
+      <p>That is unnecessary work, because every valid answer is already known. A better way is to treat the request as a decision and ask the model for a score on each allowed answer, in one go:</p>
+
+      <div class="figure-box">
+        <div class="code-badge">one scoring request &rarr; a distribution</div>
+<pre><code>billing             0.91
+technical support   0.06
+account access      0.03</code></pre>
+      </div>
+
+      <p>Billing wins &mdash; and your code can see <em>how strongly</em> it won. No sentence, no JSON, no parsing. That is the behaviour we are going to reproduce locally.</p>
+
+      <h2>This is not the same as structured output</h2>
+
+      <p>It is easy to confuse this with structured output (JSON mode, Outlines, Instructor), because both restrict what the application receives. But they do different work inside the model.</p>
+
+      <p>Structured output still <em>generates</em>. Under the hood the model writes the opening brace, the field name, the value, and the closing brace &mdash; one token at a time &mdash; and only then does your code read the field. The schema keeps it valid, but you still paid for a decode loop.</p>
+
+      <p>Scoring reads a distribution over answers you already know. And returning the whole distribution, not just the winner, is where it earns its keep. Look at two tickets:</p>
+
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th></th><th>Result 1</th><th>Result 2</th></tr></thead>
+          <tbody>
+            <tr><td>billing</td><td><strong>0.91</strong></td><td><strong>0.46</strong></td></tr>
+            <tr><td>technical support</td><td>0.06</td><td>0.44</td></tr>
+            <tr><td>account access</td><td>0.03</td><td>0.10</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Both pick billing. But the first has a clear winner, while the second is almost a coin flip. A model that only writes <code>"billing"</code> hides that from you. With scoring, your code can auto-route the first ticket and send the second one to a human. The threshold lives in your code, where you can test it and change it &mdash; not inside the model.</p>
+
+      <h2>How an LLM picks its first token</h2>
+
+      <p>To turn a model into a decision engine, it helps to remember what a normal generation step actually does.</p>
+
+      <p>Your prompt becomes token IDs. The model processes them and produces one vector for the next position. That vector has one number for every token in the vocabulary &mdash; for a Qwen or SmolLM tokenizer that is tens of thousands of numbers. Those numbers are <strong>logits</strong>; a bigger logit means the model prefers that token next.</p>
+
+      <p>In normal generation the server softmaxes that vector, picks a token, appends it, and runs the whole thing again for the next position. Over and over, until a stop token.</p>
+
+      <p>But for a bounded decision we only care about that <em>first</em> vector. We never need the second one.</p>
+
+      <h2>Turn the decision into a one-token question</h2>
+
+      <p>So we phrase the decision as a multiple-choice question and give each answer a short single-token label:</p>
+
+      <div class="figure-box">
+        <div class="code-badge">the prompt ends at "Label:"</div>
+<pre><code>Route the support ticket into exactly one category.
+
+Ticket:
+I was charged twice for the same subscription.
+
+Allowed labels:
+A = billing
+B = technical support
+C = account access
+
+Answer with exactly one label.
+Label:</code></pre>
+      </div>
+
+      <p>The prompt ends at <code>Label:</code>. The next position is exactly where the model would write <code>A</code>, <code>B</code>, or <code>C</code>. So we run the prompt through the model once, and from that single next-token vector we do four small things:</p>
+
+      <ol>
+        <li>Find the token IDs for <code>A</code>, <code>B</code>, and <code>C</code>.</li>
+        <li>Read the three logits at those positions.</li>
+        <li>Ignore every other logit in the vocabulary.</li>
+        <li>Softmax across just those three.</li>
+      </ol>
+
+      <p>If the three logits were 8.2, 5.5, and 4.8, the restricted softmax gives roughly 0.91, 0.06, 0.03. Map those back to billing, technical support, and account access. The model never generated the answer &mdash; we read it.</p>
+
+      <p>The same trick covers all three of Jev's answer types:</p>
+      <ul>
+        <li><strong>Noul</strong> (yes/no): score two tokens, <code>Yes</code> and <code>No</code> &rarr; a single probability.</li>
+        <li><strong>Choice</strong> (pick one): score the option letters &rarr; a distribution.</li>
+        <li><strong>Score</strong> (rating): score the level letters, then take the expectation $\mathbb{E}[S]=\sum_i i\,p_i$ &rarr; a continuous rating.</li>
+      </ul>
+
+      <h2>One gotcha: labels must be exactly one token</h2>
+
+      <p>This only works if each label is a single token. That is why we use letters, not the words.</p>
+
+      <p>A word like <code>"billing"</code> might be one token in one tokenizer and several in another; <code>"technical support"</code> is definitely several. Comparing multi-token phrases means scoring a sequence, which drags you back into generation. Single letters avoid all of that &mdash; the meaning still lives in the prompt, and the letter is just the token we inspect.</p>
+
+      <p>Watch one subtle bug: many tokenizers fold a leading space into the token, so <code>"A"</code> and <code>" A"</code> are different IDs. Always render the full prompt with the model's chat template, check what token actually comes next, and verify each label is exactly one token before you trust the scores.</p>
+
+      <div class="callout">
+        <div class="callout-title">Always give the model an exit</div>
+        <p>Restricted softmax puts <em>all</em> the probability on the labels you listed. If a security incident hits a router that only knows billing/technical/account, it still gets forced onto one of those three. Add an <code>OTHER / ESCALATE</code> option whenever the list might not be exhaustive.</p>
+      </div>
+
+      <h2>Do it locally, no server</h2>
+
+      <p>Avi Chawla's original walkthrough runs this through SGLang's <code>/v1/score</code> endpoint &mdash; the right choice for production, with continuous batching and KV-cache reuse. But you do not need a server to see it work. Here is the whole mechanism in plain Hugging Face <code>transformers</code>, one forward pass:</p>
+
+      <div class="figure-box">
+        <div class="code-badge">jev_scoring.py</div>
+<pre><code class="language-python">import torch, torch.nn.functional as F
+
+def score(model, tokenizer, prompt, letters):
+    # each label must be exactly one token
+    ids = []
+    for L in letters:
+        tok = tokenizer.encode(L, add_special_tokens=False)
+        assert len(tok) == 1, f"{L!r} is not one token: {tok}"
+        ids.append(tok[0])
+
+    enc = tokenizer(prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        logits = model(**enc).logits[0, -1, :]   # last position, whole vocab
+    probs = F.softmax(logits[ids].float(), dim=-1)  # restricted softmax
+    return dict(zip(letters, probs.tolist()))</code></pre>
+      </div>
+
+      <p>Run it:</p>
+      <div class="figure-box">
+        <div class="code-badge">bash</div>
+<pre><code class="language-bash">python3 jev_scoring.py                                   # SmolLM-135M
+python3 jev_scoring.py --model_id Qwen/Qwen2.5-0.5B-Instruct</code></pre>
+      </div>
+
+      <p>That is the entire idea. The model loads once, you send a prompt, and you read three numbers back. No decode loop anywhere.</p>
+
+      <h2>Now measure it</h2>
+
+      <p>The reason to bother is speed, so let us measure it honestly on the same small model &mdash; SmolLM-135M on an Apple M1 laptop.</p>
+
+      <p>Routing one ticket, scoring took about <strong>60 ms</strong> and generated <strong>0 output tokens</strong>. Asking the <em>same</em> model to write a JSON answer took about <strong>1,568 ms</strong> &mdash; roughly <strong>26&times; slower</strong>. And the generated answer was broken: it wrote <code>"choice": "1"</code> (not even one of the options), then rambled until it ran out of tokens.</p>
+
+      <p>The gap grows with how much you generate, because scoring is one constant-cost pass while generation pays per token:</p>
+
+      <div class="figure-box">
+        <div class="code-badge">measured &mdash; bench_latency.py</div>
+<pre><code>output tokens:    1     10     25     50     75    100
+generation (ms): 46    299    698   1378   2127   2794
+scoring    (ms): ~51  ~51    ~51    ~51    ~51    ~51   (0 tokens, constant)</code></pre>
+        <div class="figure-caption">About 27 ms per generated token, versus a flat ~51 ms for scoring &mdash; a ~55&times; gap by 100 tokens.</div>
+      </div>
+
+      <p>One honest caveat, because it matters. A 135M model is <em>fast</em> but not <em>smart</em>. It actually mis-routes this ticket (it leans "frontend" at ~0.11 confidence &mdash; basically a guess). The mechanism is real and the speed is real; the accuracy needs a bigger, calibrated model. The JEV-CPU project measured this: balanced accuracy climbs from 0.44 at 0.6B to 0.69 at 2B to 0.81 at 4B. Same trick, better brain.</p>
+
+      <h2>When to score, generate, or use structured output</h2>
+
+      <p>Scoring is not a replacement for generation. It applies only when you fix the set of answers before inference. A quick rule:</p>
+      <ul>
+        <li><strong>Score</strong> when the output set is known and you just need a label plus its probability &mdash; routing, moderation, sentiment, a yes/no gate, a rubric rating.</li>
+        <li><strong>Generate</strong> when the content is genuinely unknown &mdash; an email, a summary, code.</li>
+        <li><strong>Structured output</strong> when you need arbitrary JSON with fields the model has to <em>write</em> (names, numbers, extracted spans). It still decodes token by token; it is not the same as scoring.</li>
+      </ul>
+
+      <h2>What we skipped, honestly</h2>
+
+      <p>We reproduced Jev's inference path. We did not reproduce Jev itself.</p>
+
+      <p>A score of 0.91 only means billing got 91% of the probability mass among the three choices we offered. It does <em>not</em> mean the model is right 91% of the time &mdash; a raw pretrained model's confidence is not calibrated. Making the number trustworthy is a separate training step, <strong>RLCD</strong> (Reinforcement Learning for Calibrated Decisions), where the reward is an automated proper scoring rule against real outcomes. That is the part scoring alone does not give you, and it is the part worth reading about next.</p>
+
+      <p>But the inference path itself? You just built it, and it runs on a laptop.</p>
+
+      <div class="callout">
+        <div class="callout-title">That's a wrap</div>
+        <p>You turned an open LLM into a generation-free decision engine: one forward pass, read the option-token logits, restricted softmax, zero output tokens. The full academic version of this &mdash; architecture, RLCD as a proper RL problem, and using a Jev as an LLM judge &mdash; lives in the companion deep-dive in this repo.</p>
+      </div>
+    </section>
+
+
+    <footer class="article-footer">
+      <div class="tag-cloud">
+        <a href="#" class="tag">Jev</a>
+        <a href="#" class="tag">Next-token scoring</a>
+        <a href="#" class="tag">SGLang</a>
+        <a href="#" class="tag">SmolLM</a>
+        <a href="#" class="tag">Local LLM</a>
+      </div>
+      <div class="action-bar"><div><span>A tutorial-style companion to the Jev System One deep-dive &middot; Sept 2026</span></div></div>
+    </footer>
+  </main>
+</body>
+</html>

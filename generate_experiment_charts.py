@@ -1,6 +1,8 @@
 """
-Generates publication-quality charts and figures for the Medium Blog article
-on JEV, System One AI, and RLCD.
+Generates ILLUSTRATIVE (synthetic, hand-authored) charts used ONLY to convey
+intuition. These are NOT measured data. For REAL measured latency, see
+bench_latency.py -> assets/measured_latency_benchmark.png and
+results/latency_benchmark.json.
 """
 
 import matplotlib.pyplot as plt
@@ -33,7 +35,7 @@ post_counts = np.array([120, 180, 240, 310, 450, 520, 480, 390, 260, 150])
 ax1.plot([0, 1], [0, 1], '--', color='#94a3b8', label='Perfect Calibration (Identity)', linewidth=1.5)
 ax1.bar(bins - 0.04, pre_acc, width=0.08, color='#ef4444', alpha=0.75, label='Empirical Accuracy', edgecolor='#b91c1c')
 ax1.plot(bins - 0.04, pre_conf, 'o-', color='#b91c1c', label='Assigned Confidence', linewidth=2)
-ax1.set_title('Standard LLM (Pre-RLCD)\nExpected Calibration Error (ECE) = 28.38%', fontsize=13, fontweight='bold', pad=12)
+ax1.set_title('ILLUSTRATIVE (synthetic) - Standard LLM (Pre-RLCD)\nExpected Calibration Error (ECE) = 28.38%', fontsize=13, fontweight='bold', pad=12)
 ax1.set_xlabel('Assigned Model Confidence', fontsize=11, fontweight='semibold')
 ax1.set_ylabel('Empirical Observed Accuracy', fontsize=11, fontweight='semibold')
 ax1.set_xlim(0, 1.05)
@@ -44,7 +46,7 @@ ax1.legend(loc='upper left', frameon=True, facecolor='white', framealpha=0.9)
 ax2.plot([0, 1], [0, 1], '--', color='#94a3b8', label='Perfect Calibration (Identity)', linewidth=1.5)
 ax2.bar(bins - 0.04, post_acc, width=0.08, color='#10b981', alpha=0.75, label='Empirical Accuracy', edgecolor='#047857')
 ax2.plot(bins - 0.04, post_conf, 'o-', color='#047857', label='Assigned Confidence', linewidth=2)
-ax2.set_title('SmolLM-135M System One (Post-RLCD)\nExpected Calibration Error (ECE) = 2.14%', fontsize=13, fontweight='bold', pad=12)
+ax2.set_title('ILLUSTRATIVE (synthetic) - SmolLM-135M (Post-RLCD)\nExpected Calibration Error (ECE) = 2.14%', fontsize=13, fontweight='bold', pad=12)
 ax2.set_xlabel('Assigned Model Confidence', fontsize=11, fontweight='semibold')
 ax2.set_ylabel('Empirical Observed Accuracy', fontsize=11, fontweight='semibold')
 ax2.set_xlim(0, 1.05)
@@ -71,7 +73,7 @@ ece_curve = 0.284 * np.exp(-steps / 90) + 0.021 + 0.003 * np.random.normal(0, 0.
 # Left: Loss metrics
 ax1.plot(steps, brier_loss, color='#6366f1', linewidth=2, label='Brier Score Loss (Proper Scoring Rule)')
 ax1.plot(steps, log_loss, color='#f59e0b', linewidth=2, label='Logarithmic Loss (Soft Consensus NLL)')
-ax1.set_title('RLCD Objective Minimization Over Training Steps', fontsize=13, fontweight='bold', pad=12)
+ax1.set_title('ILLUSTRATIVE (synthetic) - RLCD Objective Minimization', fontsize=13, fontweight='bold', pad=12)
 ax1.set_xlabel('Optimization Steps', fontsize=11, fontweight='semibold')
 ax1.set_ylabel('Loss Value', fontsize=11, fontweight='semibold')
 ax1.grid(True, linestyle='--', alpha=0.6)
@@ -80,7 +82,7 @@ ax1.legend(loc='upper right', frameon=True)
 # Right: Calibration metric
 ax2.plot(steps, ece_curve * 100, color='#06b6d4', linewidth=2.2, label='Expected Calibration Error (ECE %)')
 ax2.axhline(y=5.0, color='#10b981', linestyle=':', linewidth=1.8, label='Target Production Threshold (5%)')
-ax2.set_title('Calibration Convergence: ECE Reduction', fontsize=13, fontweight='bold', pad=12)
+ax2.set_title('ILLUSTRATIVE (synthetic) - Calibration Convergence', fontsize=13, fontweight='bold', pad=12)
 ax2.set_xlabel('Optimization Steps', fontsize=11, fontweight='semibold')
 ax2.set_ylabel('ECE (%)', fontsize=11, fontweight='semibold')
 ax2.grid(True, linestyle='--', alpha=0.6)
@@ -123,7 +125,7 @@ ax.annotate('System One Invariant Latency\n(67.3 ms for all 3 decisions)',
             fontsize=10, fontweight='bold', ha='center',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#ecfdf5', edgecolor='#6ee7b7'))
 
-ax.set_title('Inference Latency vs Generated Token Length\n(Tested on Apple Silicon M-Series)', fontsize=13, fontweight='bold', pad=12)
+ax.set_title('ILLUSTRATIVE (synthetic) - see measured_latency_benchmark.png for real data', fontsize=13, fontweight='bold', pad=12)
 ax.set_xlabel('Number of Output Tokens Generated', fontsize=11, fontweight='semibold')
 ax.set_ylabel('End-to-End Latency (Milliseconds)', fontsize=11, fontweight='semibold')
 ax.set_ylim(0, 3000)
