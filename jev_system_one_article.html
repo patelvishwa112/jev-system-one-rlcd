@@ -1127,6 +1127,11 @@ def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) ->
   <h3>The Correction: Reading the Pretrained Logits</h3>
   <p>The genuine reproduction—implemented in <code>jev_scoring.py</code> (v2)—restored the original pretrained <code>lm_head</code> intact. By framing decisions as single-token multiple choice questions and reading the logits directly from the existing vocabulary projections (as detailed in Part 3), we required <strong>zero new parameters, zero random weights, and zero fine-tuning</strong> to extract genuine semantic judgments from the model.</p>
 
+  <div class="callout">
+    <div class="callout-title">To be precise: typed heads are not the mistake &mdash; <em>untrained</em> ones are</div>
+    <p>It would be wrong to conclude "decision heads are bad." Jev itself, by the best available reconstruction (<a href="https://di-zhang-llm.github.io/blog/what-is-rlcd-the-secret-behind-jev/">Di Zhang</a>), <em>does</em> use non-autoregressive <strong>typed decision heads</strong> &mdash; plus <strong>sequence packing and a tree attention mask</strong> so many candidates are scored in one shared forward pass without contaminating each other, then trained end-to-end with RLCD. So heads are the real design. Our v1 error was narrower and dumber: we bolted on heads that were <em>randomly initialized and never trained</em>, and we <em>deleted the <code>lm_head</code></em>, throwing away the pretrained knowledge. Reading the existing <code>lm_head</code> logits is the pragmatic <em>training-free</em> way to reproduce the same inference pattern &mdash; the right move when you cannot train the heads yourself.</p>
+  </div>
+
   <h3>Measured Results on Hardware</h3>
   <p>We executed rigorous empirical benchmarks comparing next-token scoring against full autoregressive generation. The tests were run on an <strong>Apple M1 machine with 8GB unified memory, using the PyTorch MPS backend in fp32 precision</strong>. The benchmark tasked each model with triaging the critical payment gateway outage ticket described in Part 1 into one of four teams: <code>billing</code>, <code>auth</code>, <code>infrastructure</code>, or <code>frontend</code>.</p>
 
@@ -1237,17 +1242,26 @@ def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) ->
     </table>
   </div>
 
-  <p>Because each episode is a single step (state in, distribution out, reward), the "RL" collapses to optimizing the policy so its reported probabilities maximize an automated proper-scoring reward. There is no value network, no PPO clip, no multi-step rollout &mdash; but the framing matters, because the <em>reward</em> is precisely what forces honesty about uncertainty.</p>
+  <p>Because each episode is a single step (state in, distribution out, reward), the "RL" collapses to optimizing the policy so its reported probabilities maximize a proper-scoring objective. There is no value network, no PPO clip, no multi-step rollout &mdash; the <em>reward/objective</em> is what forces honesty about uncertainty.</p>
+
+  <div class="callout">
+    <div class="callout-title">A more precise definition (a correction to our first framing)</div>
+    <p>The "RL" lens above is a useful intuition pump, but a rigorous analysis by <a href="https://di-zhang-llm.github.io/blog/what-is-rlcd-the-secret-behind-jev/">Di Zhang</a> is worth taking on board: RLCD is best understood not as a reinforcement-learning <em>algorithm</em> but as a <strong>training objective plus an output contract</strong> &mdash; roughly, <strong>multiway preference modeling + probability calibration</strong> (a schema-conditioned <strong>Plackett&ndash;Luce</strong> objective, covered below). Two consequences we got slightly wrong at first:</p>
+    <ul>
+      <li><strong>RLCD is defined by the output contract, not by a unique reward source.</strong> Human comparisons, verifiable outcomes, <em>or</em> synthetic-judge votes can all train it. Our earlier "the reward is automated, no humans" was one convenient instantiation, not the definition &mdash; RLCD is orthogonal to RLHF/RLVR, describing <em>what the model emits</em> (typed, calibrated distributions), not where the signal comes from.</li>
+      <li><strong>You do not need soft labels; hard outcome labels are fine.</strong> A strictly proper scoring rule against a one-hot outcome is still minimized by the true probability, so calibration emerges in aggregate &mdash; then <em>temperature scaling</em> cleans up residual over-confidence (see the training section). Soft/annotator-disagreement targets are an optional refinement, not a requirement.</li>
+    </ul>
+  </div>
 
   <h3>Does RLCD need SFT-style labels? (RLHF vs RLVR vs RLCD)</h3>
-  <p>Here is the crux, and a common intuition is right in spirit: RLCD does <strong>not</strong> depend on a human writing gold answers the way supervised fine-tuning (SFT) does, and it does <strong>not</strong> train a learned reward model the way RLHF does. Its reward is <em>computed</em> &mdash; like RLVR's verifier, the system checks the answer and hands back a number automatically. There is one honest caveat, stated precisely below.</p>
+  <p>A common intuition is right in spirit: RLCD does <strong>not</strong> require SFT-style hand-written gold answers, and it does <strong>not</strong> train a learned reward model the way RLHF does. Its signal comes from an <em>outcome scored by a fixed rule</em>. Where that outcome comes from is deliberately open &mdash; the reward can be computed automatically (a verifier or synthetic judges) <em>or</em> read off human comparisons; RLCD does not pin it down (see the correction above). The one thing it always needs is an outcome to score against.</p>
 
   <div class="table-wrapper">
     <table>
       <thead><tr><th></th><th>RLHF</th><th>RLVR</th><th>RLCD</th></tr></thead>
       <tbody>
         <tr><td><strong>Reward source</strong></td><td>A <em>learned</em> reward model of human preferences</td><td>An automated <em>verifier</em> (unit test, math checker): binary 0/1</td><td>An automated <em>proper scoring rule</em> vs the outcome: smooth, in $[0,1]$</td></tr>
-        <tr><td><strong>Humans in the loop?</strong></td><td>Yes &mdash; preference labels + reward-model training</td><td>No &mdash; but needs a checkable task</td><td>No hand-written gold answers &mdash; but needs an <em>outcome</em> to score against</td></tr>
+        <tr><td><strong>Signal source</strong></td><td>Learned model of human preference labels</td><td>An automated verifier (checkable task)</td><td>Source-agnostic: human comparisons, verifiable outcomes, <em>or</em> synthetic judges &mdash; just needs an <em>outcome</em> to score</td></tr>
         <tr><td><strong>Effect on confidence</strong></td><td>Rewards conviction/style &rarr; overconfident</td><td>Collapses to 0 or 1 &rarr; no nuance</td><td>Maximized only by telling the truth about $p$ &rarr; calibrated</td></tr>
       </tbody>
     </table>
@@ -1269,7 +1283,19 @@ def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) ->
     </div>
   </div>
 
-  <p>Two strictly proper scoring rules form the foundation of calibrated decision theory:</p>
+  <p>It helps to see RLCD as <em>two</em> coupled objectives: a <strong>preference/ranking</strong> term that gets the ordering right, and a <strong>calibration</strong> term that gets the probabilities honest.</p>
+
+  <p><strong>0. The preference term (schema-conditioned Plackett&ndash;Luce).</strong> Di Zhang's analysis frames RLCD's ranking objective as a Plackett&ndash;Luce model over the option utilities $u_i$. For a full ranking $\pi$ it is:</p>
+  <div class="math-card">
+    <div class="formula">
+      $$\mathcal{L}_{\text{PL}} = -\sum_{t=1}^{K} \log \frac{\exp(u_{\pi_t})}{\sum_{j=t}^{K} \exp(u_{\pi_j})}$$
+    </div>
+    <div class="explanation">
+      For the common case of a single correct choice $y$, this collapses to exactly the restricted softmax cross-entropy we already read off the option-token logits: $\mathcal{L}_{\text{choice}} = -\log\big(\exp(u_y)/\sum_j \exp(u_j)\big)$. So the "preference" half is not exotic &mdash; it is the same categorical objective, generalized to rankings.
+    </div>
+  </div>
+
+  <p>On top of the ranking term, RLCD adds calibration via a strictly proper scoring rule. Two form the foundation:</p>
 
   <p><strong>1. The Multi-Class Brier Score (Negative Mean Squared Error):</strong></p>
   <div class="math-card">
@@ -1327,7 +1353,7 @@ def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) ->
 
   <p><strong>Step 2 &mdash; Collect states.</strong> Pull real inputs from wherever the decision already happens &mdash; historical support tickets, logged transactions, past reviews. You are not writing answers yet, just gathering the raw states you want the model to judge.</p>
 
-  <p><strong>Step 3 &mdash; Attach outcomes as <em>soft</em> targets (the key step).</strong> Do <strong>not</strong> use one-hot gold labels: training a distribution against $[1,0,0]$ with cross-entropy drives logits to explode toward probability 1.0 and destroys calibration. Instead attach a soft target $\mathbf{q}$ that reflects genuine ambiguity, harvested automatically from any of the three outcome sources introduced above:</p>
+  <p><strong>Step 3 &mdash; Attach outcomes.</strong> Attach the observed outcome for each state. <em>Hard one-hot outcomes are perfectly fine</em> &mdash; a proper scoring rule against them is still minimized by the true probability, and calibration emerges across many examples (Step 6 adds temperature scaling to finish the job). The one thing that is genuinely improper is training toward <em>accuracy</em>; a proper scoring rule is what you want. Where hard labels are unavailable or the task is genuinely ambiguous, a <em>soft</em> target $\mathbf{q}$ (an optional refinement that captures irreducible disagreement) can be harvested automatically from any of the three outcome sources introduced above:</p>
   <ul>
     <li><strong>Logged outcomes:</strong> which team actually closed the ticket, whether the flagged charge was reversed &mdash; free ground truth from the environment. Aggregate repeated/near-duplicate states into a frequency to get softness.</li>
     <li><strong>Ensemble votes:</strong> run $N$ cheap LLM judges with temperature/persona jitter; their vote split <em>is</em> $\mathbf{q}$. If 12 of 16 say billing and 4 say account, $\mathbf{q}=[0.75,0,0.25]$.</li>
@@ -1340,24 +1366,32 @@ def score_positions(model, tokenizer, prompt: str, option_letters: list[str]) ->
 <pre><code class="language-python">{
   "text": "State: 'I was charged twice for the same subscription.'\n"
           "Question: Route this ticket.\nOptions: [billing, technical, account, other]",
-  "soft_target": [0.75, 0.05, 0.20, 0.00],   # q: harvested outcome distribution, NOT one-hot
+  "target": [0.75, 0.05, 0.20, 0.00],        # outcome: one-hot is fine; soft q captures ambiguity
   "hard_label": 0,                            # argmax, only for accuracy reporting
   "num_options": 4
 }</code></pre>
   </div>
 
-  <p><strong>Step 5 &mdash; Train against a proper scoring rule.</strong> The loss is a strictly proper scoring rule evaluated against the soft target &mdash; here a Brier + log-loss blend. Nothing else changes about the model; you are only reshaping <em>how confident</em> it is allowed to be:</p>
+  <p><strong>Step 5 &mdash; Train against a proper scoring rule.</strong> The loss is a strictly proper scoring rule evaluated against the outcome target (one-hot or soft) &mdash; here a Brier + log-loss blend, on top of the Plackett&ndash;Luce/categorical ranking term. Nothing else changes about the model; you are only reshaping <em>how confident</em> it is allowed to be:</p>
   <div class="figure-box">
     <div class="code-badge">train_rlcd.py &mdash; the RLCD step</div>
 <pre><code class="language-python"># probs: model's restricted-softmax distribution over the K options
-# soft_targets: q, the harvested outcome distribution (soft, not one-hot)
-brier = torch.mean(torch.sum((probs - soft_targets) ** 2, dim=-1))      # proper scoring rule
-logl  = -torch.mean(torch.sum(soft_targets * torch.log(probs.clamp_min(1e-12)), dim=-1))
+# targets: the outcome distribution (one-hot is fine; soft q is optional)
+brier = torch.mean(torch.sum((probs - targets) ** 2, dim=-1))      # proper scoring rule
+logl  = -torch.mean(torch.sum(targets * torch.log(probs.clamp_min(1e-12)), dim=-1))
 loss  = 0.7 * brier + 0.3 * logl        # both are minimized only when p == q
 loss.backward(); optimizer.step()</code></pre>
   </div>
 
-  <p><strong>Step 6 &mdash; Measure calibration, then iterate.</strong> Accuracy alone will not tell you if the probabilities are honest. Bin predictions by confidence and compare each bin's confidence to its empirical accuracy &mdash; that gap is Expected Calibration Error (ECE), and a reliability curve visualizes it. Drive ECE down, re-harvest outcomes where the model is over/under-confident, and repeat. <code>train_rlcd.py</code> logs val accuracy and ECE every epoch and works out-of-the-box on the offline synthetic generator or on <code>financial_phrasebank</code>.</p>
+  <p><strong>Step 6 &mdash; Calibrate (temperature scaling), then measure.</strong> Even with a proper training loss, deep models come out over-confident. The standard, cheap fix is <strong>temperature scaling</strong>: divide the logits by a single scalar $T$ before the softmax, and pick $T$ by minimizing Brier (or NLL) on a held-out set:</p>
+  <div class="math-card">
+    <div class="formula">
+      $$p_i = \frac{\exp(u_i / T)}{\sum_j \exp(u_j / T)}, \qquad T^{*} = \arg\min_T \sum_n \text{Brier}\big(\mathbf{p}^{(T)}(x_n),\, y_n\big)$$
+    </div>
+    <div class="explanation">
+      One parameter, fit after training, that rescales confidence without touching the ranking. Our decision heads already carry a learnable temperature for exactly this. Then verify: bin predictions by confidence, compare each bin's confidence to its empirical accuracy (that gap is <strong>Expected Calibration Error, ECE</strong>; a reliability curve visualizes it), and iterate. <code>train_rlcd.py</code> logs val accuracy and ECE every epoch.</p>
+    </div>
+  </div>
 
   <div class="callout">
     <div class="callout-title">Honest disclosure about our own ECE numbers</div>
