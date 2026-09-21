@@ -1,0 +1,32 @@
+{
+  "model_id": "HuggingFaceTB/SmolLM-135M",
+  "device": "mps",
+  "scoring_ms_constant": 50.6,
+  "scoring_output_tokens": 0,
+  "generation": [
+    {
+      "tokens": 1,
+      "latency_ms": 46.1
+    },
+    {
+      "tokens": 10,
+      "latency_ms": 299.3
+    },
+    {
+      "tokens": 25,
+      "latency_ms": 698.5
+    },
+    {
+      "tokens": 50,
+      "latency_ms": 1377.6
+    },
+    {
+      "tokens": 75,
+      "latency_ms": 2127.0
+    },
+    {
+      "tokens": 100,
+      "latency_ms": 2794.0
+    }
+  ]
+}
